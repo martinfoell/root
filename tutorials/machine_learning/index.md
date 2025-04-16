@@ -138,9 +138,3 @@
 | RBatchGenerator_PyTorch.py | Example of getting batches of events from a ROOT dataset into a basic PyTorch workflow. |
 | RBatchGenerator_TensorFlow.py | Example of getting batches of events from a ROOT dataset into a basic TensorFlow workflow. |
 
-
-
-
-
-
-
