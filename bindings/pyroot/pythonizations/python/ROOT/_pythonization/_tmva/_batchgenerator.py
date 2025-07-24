@@ -162,10 +162,10 @@ class BaseGenerator:
 
         self.noded_rdf = RDF.AsRNode(rdataframe)
 
-        if ROOT.Internal.RDF.GetDataSourceLabel(self.noded_rdf) != "TTreeDS":
-            raise ValueError(
-                "RNode object must be created out of TTrees or files of TTree"
-            )
+        # if ROOT.Internal.RDF.GetDataSourceLabel(self.noded_rdf) != "TTreeDS":
+        #     raise ValueError(
+        #         "RNode object must be created out of TTrees or files of TTree"
+        #     )
 
         if isinstance(target, str):
             target = [target]
