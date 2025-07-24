@@ -25,9 +25,12 @@
 #include <memory>
 #include <mutex>
 #include <random>
+#include <atomic>
+#include <future>
 #include <thread>
 #include <variant>
 #include <vector>
+#include <chrono>
 
 namespace TMVA {
 namespace Experimental {
@@ -65,7 +68,13 @@ private:
 
    std::unique_ptr<std::thread> fLoadingThread;
 
-   std::size_t fTrainingChunkNum;
+   std::atomic<std::size_t> fTrainingChunkNum{0};
+   // std::size_t fTrainingChunkNum;
+   std::atomic<bool> batchesReady{false};
+   std::atomic<int> currentProcessingChunk{0};    // Used by processor
+   std::atomic<int> nextLoadedChunk{1};           // Prepared by loader
+   std::atomic<bool> nextBatchReady{false};       // Signals ready to swap
+   
    std::size_t fValidationChunkNum;
 
    ROOT::RDF::RNode &f_rdf;
@@ -103,9 +112,24 @@ private:
    TMVA::Experimental::RTensor<float> fTrainTensor;
    TMVA::Experimental::RTensor<float> fTrainChunkTensor;
 
+   TMVA::Experimental::RTensor<float> fPreloadChunkTensor;   
+
    TMVA::Experimental::RTensor<float> fValidationTensor;
    TMVA::Experimental::RTensor<float> fValidationChunkTensor;
 
+   std::thread loaderThread;           // background thread
+   std::atomic<bool> stopFlag{false};  // signal for thread exit
+   std::atomic<bool> loaderRunning{false};  // tracks if thread is running   
+   // std::atomic<bool> loadingInProgress{false};
+
+   std::atomic<bool> threadStarted = false;   
+   std::future<void> loadingFuture;
+   std::atomic<bool> loadingInProgress{false};
+   // Your buffers:
+   
+   TMVA::Experimental::RTensor<float> fValidationChunkTensorLoaded;
+   TMVA::Experimental::RTensor<float> fTrainChunkTensorLoaded;
+   
 public:
    RBatchGenerator(ROOT::RDF::RNode &rdf, const std::size_t chunkSize, const std::size_t blockSize,
                    const std::size_t batchSize, const std::vector<std::string> &cols, const std::size_t numColumns,
@@ -128,8 +152,11 @@ public:
         fNumColumns(cols.size()),
         fTrainTensor({0, 0}),
         fTrainChunkTensor({0, 0}),
+        fTrainChunkTensorLoaded({0, 0}),      
+        fPreloadChunkTensor({0, 0}),        
         fValidationTensor({0, 0}),
-        fValidationChunkTensor({0, 0})
+        fValidationChunkTensor({0, 0}),
+        fValidationChunkTensorLoaded({0, 0})
    {
 
       fNumEntries = f_rdf.Count().GetValue();
@@ -233,11 +260,40 @@ public:
       fChunkLoader->CreateTrainingChunksIntervals();
       fTrainingEpochActive = true;
       fTrainingChunkNum = 0;
+
+      // loaderThread = std::thread([this]() {
+      //    threadStarted = true;
+      //    // Load new chunk into fTrainChunkTensorLoaded tensor
+      //    fChunkLoader->LoadTrainingChunk(fTrainChunkTensorLoaded, fTrainingChunkNum);
+      //    std::cout << "load new thread" << std::endl;
+         
+      //  });         
+      // fTrainingChunkNum++;      
+      auto start_loading = std::chrono::high_resolution_clock::now();
       fChunkLoader->LoadTrainingChunk(fTrainChunkTensor, fTrainingChunkNum);
+      auto end_loading = std::chrono::high_resolution_clock::now();
+      // Calculate duration
+      std::chrono::duration<double, std::milli> elapsed_loading = end_loading - start_loading;
+      std::cout << "Elapsed loading time: " << elapsed_loading.count() << " ms\n";
       std::size_t lastTrainingBatch = fNumTrainingChunks - fTrainingChunkNum;
+      auto start_batching = std::chrono::high_resolution_clock::now();
       fBatchLoader->CreateTrainingBatches(fTrainChunkTensor, lastTrainingBatch, fLeftoverTrainingBatchSize,
                                           fDropRemainder);
+      auto end_batching = std::chrono::high_resolution_clock::now();      
+      std::chrono::duration<double, std::milli> elapsed_batching = end_batching - start_batching;
+      std::cout << "Elapsed batching time: " << elapsed_batching.count() << " ms\n";
+      
       fTrainingChunkNum++;
+
+      
+      // loaderThread.join();
+      // lastTrainingBatch = fNumTrainingChunks - fTrainingChunkNum;
+      // fBatchLoader->CreateTrainingBatches(fTrainChunkTensorLoaded, lastTrainingBatch, 
+      //                                          fLeftoverTrainingBatchSize, fDropRemainder);
+
+      // threadStarted = false;
+
+
    }
 
    /// \brief Creates validation batches by first loading a chunk (see RChunkLoader), and then split it into batches (see RBatchLoader)   
@@ -256,18 +312,126 @@ public:
       fValidationChunkNum++;
    }
 
-   /// \brief Loads a training batch from the queue
-   TMVA::Experimental::RTensor<float> GetTrainBatch()
+
+   TMVA::Experimental::RTensor<float> GetTrainBatch2()
    {
+      auto start_get = std::chrono::high_resolution_clock::now();                        
+               
+      
       auto batchQueue = fBatchLoader->GetNumTrainingBatchQueue();
 
-      // load the next chunk if the queue is empty
+      std::cout << batchQueue << " " << fTrainingChunkNum << " " << fNumTrainingChunks << std::endl;
+      auto TensorSize = fTrainChunkTensorLoaded.GetSize();
+      if (!threadStarted && fTrainingChunkNum < fNumTrainingChunks) {
+         std::cout << "Start loading new chunk in thread" << std::endl;
+         loaderThread = std::thread([this]() {
+            threadStarted = true;
+            // Load new chunk into fTrainChunkTensorLoaded tensor
+            fChunkLoader->LoadTrainingChunk(fTrainChunkTensorLoaded, fTrainingChunkNum);
+         });         
+      }
+      
       if (batchQueue < 1 && fTrainingChunkNum < fNumTrainingChunks) {
-         fChunkLoader->LoadTrainingChunk(fTrainChunkTensor, fTrainingChunkNum);
+         auto start_join = std::chrono::high_resolution_clock::now();                        
+         loaderThread.join();
+         auto end_join = std::chrono::high_resolution_clock::now();               
+         std::chrono::duration<double, std::milli> elapsed_join = end_join - start_join;
+         std::cout << "Join  time: " << elapsed_join.count() << " ms" << std::endl;
+         
          std::size_t lastTrainingBatch = fNumTrainingChunks - fTrainingChunkNum;
-         fBatchLoader->CreateTrainingBatches(fTrainChunkTensor, lastTrainingBatch, fLeftoverTrainingBatchSize,
+         fBatchLoader->CreateTrainingBatches(fTrainChunkTensorLoaded, lastTrainingBatch, fLeftoverTrainingBatchSize,
                                              fDropRemainder);
          fTrainingChunkNum++;
+         fTrainChunkTensorLoaded = TMVA::Experimental::RTensor<float>(std::vector<std::size_t>{0, 0});
+         // fTrainChunkTensorLoaded({0, 0});
+         std::cout << "here" << std::endl;
+         threadStarted = false;         
+         loaderThread = std::thread([this]() {
+            threadStarted = true;
+            // Load new chunk into fTrainChunkTensorLoaded tensor
+            fChunkLoader->LoadTrainingChunk(fTrainChunkTensorLoaded, fTrainingChunkNum);
+         });         
+         }
+      
+
+      // else {
+      //    ROOT::Internal::RDF::ChangeBeginAndEndEntries(f_rdf, 0, fNumEntries);
+      // }
+
+      // Get next batch if available
+      auto end_get = std::chrono::high_resolution_clock::now();
+      std::chrono::duration<double, std::milli> elapsed_get = end_get - start_get;
+      std::cout << "Time to get new batch: " << elapsed_get.count() << " ms" << std::endl;
+      
+      return fBatchLoader->GetTrainBatch();
+   }
+
+   /// \brief Loads a validation batch from the queue   
+   TMVA::Experimental::RTensor<float> GetValidationBatch2()
+   {
+      auto batchQueue = fBatchLoader->GetNumValidationBatchQueue();
+
+      std::cout << batchQueue << " " << fTrainingChunkNum << " " << fNumTrainingChunks << std::endl;
+      auto shape = fValidationChunkTensorLoaded.GetSize();
+      std::cout << fValidationChunkTensorLoaded.GetSize() << std::endl;
+      if (shape == 0 && fValidationChunkNum < fNumValidationChunks) {
+       loaderThread = std::thread([this]() {
+           // Do loading work
+          fChunkLoader->LoadValidationChunk(fValidationChunkTensor, fValidationChunkNum);
+          std::size_t lastValidationBatch = fNumValidationChunks - fValidationChunkNum;
+          fBatchLoader->CreateValidationBatches(fValidationChunkTensorLoaded, lastValidationBatch,
+                                                fLeftoverValidationBatchSize, fDropRemainder);
+          fValidationChunkNum++;
+           
+          // Mark loading finished
+          loadingInProgress.store(false);
+          std::cout << "empty tensor 2" << std::endl;
+       });         
+      }
+      
+      if (loaderThread.joinable()) {
+         loaderThread.join();  // wait for previous thread
+         std::size_t lastValidationBatch = fNumValidationChunks - fValidationChunkNum;         
+         fBatchLoader->CreateValidationBatches(fValidationChunkTensorLoaded, lastValidationBatch,
+                                                fLeftoverValidationBatchSize, fDropRemainder);
+         fTrainingChunkNum++;
+         fTrainChunkTensorLoaded({0, 0});
+         std::cout << "thread finished" << std::endl;
+      }
+
+      if (batchQueue < 1 && fValidationChunkNum < fNumValidationChunks) {
+         std::size_t lastValidationBatch = fNumValidationChunks - fValidationChunkNum;
+         fBatchLoader->CreateValidationBatches(fValidationChunkTensorLoaded, lastValidationBatch,
+                                                fLeftoverValidationBatchSize, fDropRemainder);
+         fValidationChunkNum++;
+         
+         fTrainingChunkNum++;
+         // fTrainChunkTensorLoaded({0, 0});
+         // fTrainChunkTensorLoaded = TMVA::Experimental::RTensor<float>>(std::vector<std::size_t>{0, 0});
+         std::cout << "here" << std::endl;
+         }
+      
+      //    fChunkLoader->LoadTrainingChunk(fTrainChunkTensor, fTrainingChunkNum);
+      //    std::size_t lastTrainingBatch = fNumTrainingChunks - fTrainingChunkNum;
+      //    fBatchLoader->CreateTrainingBatches(fTrainChunkTensor, lastTrainingBatch, fLeftoverTrainingBatchSize,
+      //                                        fDropRemainder);
+      //    fTrainingChunkNum++;
+      // }
+
+      // else {
+      //    ROOT::Internal::RDF::ChangeBeginAndEndEntries(f_rdf, 0, fNumEntries);
+      // }
+
+      // Get next batch if available
+      return fBatchLoader->GetTrainBatch();
+      
+      // load the next chunk if the queue is empty      
+      if (batchQueue < 1 && fValidationChunkNum < fNumValidationChunks) {
+         fChunkLoader->LoadValidationChunk(fValidationChunkTensor, fValidationChunkNum);
+         std::size_t lastValidationBatch = fNumValidationChunks - fValidationChunkNum;
+         fBatchLoader->CreateValidationBatches(fValidationChunkTensor, lastValidationBatch,
+                                               fLeftoverValidationBatchSize, fDropRemainder);
+         fValidationChunkNum++;
       }
 
       else {
@@ -275,9 +439,38 @@ public:
       }
 
       // Get next batch if available
+      return fBatchLoader->GetValidationBatch();
+   }
+   
+   /// \brief Loads a training batch from the queue
+   TMVA::Experimental::RTensor<float> GetTrainBatch()
+   {
+      auto batchQueue = fBatchLoader->GetNumTrainingBatchQueue();
+
+      // std::cout << batchQueue << " " << fTrainingChunkNum << " " << fNumTrainingChunks << std::endl;
+      // load the next chunk if the queue is empty
+      if (batchQueue < 1 && fTrainingChunkNum < fNumTrainingChunks) {
+         // auto start_loading = std::chrono::high_resolution_clock::now();
+         fChunkLoader->LoadTrainingChunk(fTrainChunkTensor, fTrainingChunkNum);
+         // auto end_loading = std::chrono::high_resolution_clock::now();
+         // std::chrono::duration<double, std::milli> elapsed_loading = end_loading - start_loading;
+         // std::cout << "Loading new chunk time: " << elapsed_loading.count() << " ms" << std::endl;
+         
+         auto copyQueue = fBatchLoader->CopyTrainingQueue();
+         std::size_t lastTrainingBatch = fNumTrainingChunks - fTrainingChunkNum;
+         fBatchLoader->CreateTrainingBatches(fTrainChunkTensor, lastTrainingBatch, fLeftoverTrainingBatchSize,
+                                             fDropRemainder);
+         fTrainingChunkNum++;
+      }
+
+      // else if  {
+      //    ROOT::Internal::RDF::ChangeBeginAndEndEntries(f_rdf, 0, fNumEntries);
+      // }
+
+      // Get next batch if available
       return fBatchLoader->GetTrainBatch();
    }
-
+   
    /// \brief Loads a validation batch from the queue   
    TMVA::Experimental::RTensor<float> GetValidationBatch()
    {

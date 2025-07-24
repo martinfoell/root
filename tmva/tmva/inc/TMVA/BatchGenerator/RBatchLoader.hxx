@@ -269,6 +269,33 @@ public:
          fTrainingBatchQueue.push(std::move(batches[i]));
       }
    }
+
+   // std::queue<std::unique_ptr<TMVA::Experimental::RTensor<float>>> CopyTrainingQueue()
+   // {
+   //    return fTrainingBatchQueue;
+   // }
+
+   std::queue<std::unique_ptr<TMVA::Experimental::RTensor<float>>> CopyTrainingQueue()
+   {
+      return std::move(fTrainingBatchQueue);
+   }
+   
+   /// \brief Loading the training batch from the queue
+   /// \return Training batch
+   TMVA::Experimental::RTensor<float> GetTrainBatchFromQueue(std::queue<std::unique_ptr<TMVA::Experimental::RTensor<float>>> queue)
+   {
+
+      if (queue.empty()) {
+         fCurrentBatch = std::make_unique<TMVA::Experimental::RTensor<float>>(std::vector<std::size_t>({0}));
+         return *fCurrentBatch;
+      }
+
+      fCurrentBatch = std::move(queue.front());
+      queue.pop();
+
+      return *fCurrentBatch;
+   }
+   
    
    /// \brief Creating the validation batches from a chunk and adding them to the queue
    /// \param[in] chunkTensor RTensor with the data from the chunk
