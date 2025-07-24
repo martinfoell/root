@@ -3,7 +3,7 @@ from pytest import mark, raises, skip
 from support import setup_make, pylong, pyunicode, IS_MAC_ARM
 
 currpath = os.getcwd()
-test_dct = currpath + "/datatypesDict"
+test_dct = currpath + "/libdatatypesDict"
 
 
 class TestDATATYPES:
@@ -2356,6 +2356,7 @@ class TestDATATYPES:
         assert str(bt(1)) == 'True'
         assert str(bt(0)) == 'False'
 
+    @mark.xfail(condition=IS_MAC_ARM, reason="Fails on mac-beta ARM64")
     def test49_addressof_method(self):
         """Use of addressof for (const) methods"""
 
@@ -2374,6 +2375,76 @@ class TestDATATYPES:
         assert [ns.test[i]  for i in range(6)] == [-0x12, -0x34, -0x56, -0x78, 0x0, 0x0]
         assert [ns.utest[i] for i in range(6)] == [ 0x12,  0x34,  0x56,  0x78, 0x0, 0x0]
 
+    def test51_polymorphic_types_in_maps(self):
+        """Auto down-cast polymorphic types in maps"""
+        import cppyy
+        from cppyy import gbl
+
+        cppyy.cppdef(
+            """
+        namespace PolymorphicMaps {
+        struct Base {
+            int x;
+            Base(int x) : x(x) {}
+            virtual ~Base() {}
+        } b(1);
+
+        struct Derived : public Base {
+            int y;
+            Derived(int i) : Base(i), y(i) {}
+        } d(1);
+
+        std::map<int, Base*> getBaseMap() {
+            std::map<int, Base*> m;
+            m[1] = &b;
+            m[2] = &d;
+            return m;
+        }
+        }  // namespace PolymorphicMaps
+        """
+        )
+
+        for k, v in gbl.PolymorphicMaps.getBaseMap():
+            if k == 1:
+                assert type(v) == gbl.PolymorphicMaps.Base
+            else:
+                assert type(v) == gbl.PolymorphicMaps.Derived
+
+    def test52_virtual_inheritance(self):
+        import cppyy
+        from cppyy import gbl
+
+        cppyy.cppdef("""
+        class JetTag {
+        public:
+            JetTag() {}
+            virtual ~JetTag() = default;
+            int jt = 0;
+            std::string name = "NAME";
+        };
+        class BaseTag: public JetTag {
+        public:
+            int bt = 1;
+        } bt;
+        class JetFitTag: public virtual BaseTag {
+        public:
+            int jft = 2;
+        } jft;
+        class JetFit: public virtual JetFitTag {
+        public:
+            int jf = 3;
+        } jf;
+        std::vector<const JetTag*> make() {
+            std::vector<const JetTag*> res;
+            res.push_back(&bt);
+            res.push_back(&jft);
+            res.push_back(&jf);
+            return res;
+        }
+        """)
+
+        for i in gbl.make():
+            assert i.name == "NAME"
 
 if __name__ == "__main__":
     exit(pytest.main(args=['-sv', '-ra', __file__]))

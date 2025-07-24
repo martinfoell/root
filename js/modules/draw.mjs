@@ -1,6 +1,6 @@
 import { select as d3_select } from './d3.mjs';
 import { loadScript, loadModules, findFunction, internals, settings, getPromise, isNodeJs, isObject, isFunc, isStr,
-         _ensureJSROOT, prROOT,
+         _ensureJSROOT, getKindForType, getTypeForKind,
          clTObject, clTNamed, clTString, clTAttLine, clTAttFill, clTAttMarker, clTAttText,
          clTObjString, clTFile, clTList, clTHashList, clTMap, clTObjArray, clTClonesArray,
          clTPave, clTPaveText, clTPavesText, clTPaveStats, clTPaveLabel, clTPaveClass, clTDiamond, clTLegend, clTPaletteAxis,
@@ -135,6 +135,8 @@ drawFuncs = { lst: [
    { name: clTBranchFunc, icon: 'img_leaf_method', draw: () => import_tree().then(h => h.drawTree), opt: ';dump', noinspect: true },
    { name: /^TBranch/, icon: 'img_branch', draw: () => import_tree().then(h => h.drawTree), dflt: 'expand', opt: ';dump', ctrl: 'dump', shift: kInspect, ignore_online: true, always_draw: true },
    { name: /^TLeaf/, icon: 'img_leaf', noexpand: true, draw: () => import_tree().then(h => h.drawTree), opt: ';dump', ctrl: 'dump', ignore_online: true, always_draw: true },
+   { name: 'ROOT::RNTuple', icon: 'img_tree', get_expand: () => import('./rntuple.mjs').then(h => h.tupleHierarchy) },
+   { name: 'ROOT::RNTupleField', icon: 'img_leaf', opt: 'inspect', ctrl: 'inspect' },
    { name: clTList, icon: 'img_list', draw: () => import_h().then(h => h.drawList), get_expand: () => import_h().then(h => h.listHierarchy), dflt: 'expand' },
    { name: clTHashList, sameas: clTList },
    { name: clTObjArray, sameas: clTList },
@@ -196,7 +198,7 @@ function getDrawHandle(kind, selector) {
    if ((selector === null) && (kind in drawFuncs.cache))
       return drawFuncs.cache[kind];
 
-   const search = (kind.indexOf(prROOT) === 0) ? kind.slice(5) : `kind:${kind}`;
+   const search = getTypeForKind(kind) || `kind:${kind}`;
    let counter = 0;
    for (let i = 0; i < drawFuncs.lst.length; ++i) {
       const h = drawFuncs.lst[i];
@@ -206,7 +208,7 @@ function getDrawHandle(kind, selector) {
          continue;
 
       if (h.sameas) {
-         const hs = getDrawHandle(prROOT + h.sameas, selector);
+         const hs = getDrawHandle(getKindForType(h.sameas), selector);
          if (hs) {
             for (const key in hs) {
                if (h[key] === undefined)
@@ -248,17 +250,20 @@ function getDrawHandle(kind, selector) {
 function canDrawHandle(h) {
    if (isStr(h))
       h = getDrawHandle(h);
-   if (!isObject(h)) return false;
-   return h.func || h.class || h.draw || h.draw_field;
+   if (!isObject(h))
+      return false;
+   return (h.func || h.class || h.draw || h.draw_field || h.opt === 'inspect');
 }
 
 /** @summary Provide draw settings for specified class or kind
   * @private */
 function getDrawSettings(kind, selector) {
    const res = { opts: null, inspect: false, expand: false, draw: false, handle: null };
-   if (!isStr(kind)) return res;
+   if (!isStr(kind))
+      return res;
    let isany = false, noinspect = false, canexpand = false;
-   if (!isStr(selector)) selector = '';
+   if (!isStr(selector))
+      selector = '';
 
    for (let cnt = 0; cnt < 1000; ++cnt) {
       const h = getDrawHandle(kind, cnt);
@@ -277,21 +282,27 @@ function getDrawSettings(kind, selector) {
          opts[i] = opts[i].toLowerCase();
          if (opts[i].indexOf('same') === 0) {
             res.has_same = true;
-            if (selector.indexOf('nosame') >= 0) continue;
+            if (selector.indexOf('nosame') >= 0)
+               continue;
          }
 
-         if (res.opts === null) res.opts = [];
-         if (res.opts.indexOf(opts[i]) < 0) res.opts.push(opts[i]);
+         if (res.opts === null)
+            res.opts = [];
+         if (res.opts.indexOf(opts[i]) < 0)
+            res.opts.push(opts[i]);
       }
       if (h.theonly) break;
    }
 
-   if (selector.indexOf('noinspect') >= 0) noinspect = true;
+   if (selector.indexOf('noinspect') >= 0)
+      noinspect = true;
 
-   if (isany && (res.opts === null)) res.opts = [''];
+   if (isany && (res.opts === null))
+      res.opts = [''];
 
    // if no any handle found, let inspect ROOT-based objects
-   if (!isany && (kind.indexOf(prROOT) === 0) && !noinspect) res.opts = [];
+   if (!isany && getTypeForKind(kind) && !noinspect)
+      res.opts = [];
 
    if (!noinspect && res.opts)
       res.opts.push(kInspect);
@@ -319,7 +330,7 @@ function setDefaultDrawOpt(classname, opt) {
             setDefaultDrawOpt(arr[0], arr[1] || '');
       });
    } else {
-      const handle = getDrawHandle(prROOT + classname, 0);
+      const handle = getDrawHandle(getKindForType(classname), 0);
       if (handle)
          handle.dflt = opt;
    }
@@ -348,7 +359,7 @@ async function draw(dom, obj, opt) {
    let handle, type_info;
    if ('_typename' in obj) {
       type_info = 'type ' + obj._typename;
-      handle = getDrawHandle(prROOT + obj._typename, opt);
+      handle = getDrawHandle(getKindForType(obj._typename), opt);
    } else if ('_kind' in obj) {
       type_info = 'kind ' + obj._kind;
       handle = getDrawHandle(obj._kind, opt);
@@ -487,25 +498,23 @@ async function redraw(dom, obj, opt) {
    const can_painter = getElementCanvPainter(dom);
    let handle, res_painter = null, redraw_res;
    if (obj._typename)
-      handle = getDrawHandle(prROOT + obj._typename);
+      handle = getDrawHandle(getKindForType(obj._typename));
    if (handle?.draw_field && obj[handle.draw_field])
       obj = obj[handle.draw_field];
 
    if (can_painter) {
       if (can_painter.matchObjectType(obj._typename)) {
          redraw_res = can_painter.redrawObject(obj, opt);
-         if (redraw_res) res_painter = can_painter;
+         if (redraw_res)
+            res_painter = can_painter;
       } else {
-         for (let i = 0; i < can_painter.painters.length; ++i) {
-            const painter = can_painter.painters[i];
-            if (painter.matchObjectType(obj._typename)) {
+         can_painter.forEachPainterInPad(painter => {
+            if (!res_painter && painter.matchObjectType(obj._typename)) {
                redraw_res = painter.redrawObject(obj, opt);
-               if (redraw_res) {
+               if (redraw_res)
                   res_painter = painter;
-                  break;
-               }
-            }
-         }
+            };
+         }, 'objects');
       }
    } else {
       const top = new BasePainter(dom).getTopPainter();
@@ -513,7 +522,8 @@ async function redraw(dom, obj, opt) {
       // it can be object painter here or can be specially introduce method to handling redraw!
       if (isFunc(top?.redrawObject)) {
          redraw_res = top.redrawObject(obj, opt);
-         if (redraw_res) res_painter = top;
+         if (redraw_res)
+            res_painter = top;
       }
    }
 
@@ -529,7 +539,8 @@ async function redraw(dom, obj, opt) {
   * @desc Assign draw functions for such derived classes
   * @private */
 function addStreamerInfosForPainter(lst) {
-   if (!lst) return;
+   if (!lst)
+      return;
 
    const basics = [clTObject, clTNamed, clTString, 'TCollection', clTAttLine, clTAttFill, clTAttMarker, clTAttText];
 
@@ -541,7 +552,7 @@ function addStreamerInfosForPainter(lst) {
       if (basics.indexOf(element.fName) >= 0)
          return null;
 
-      let handle = getDrawHandle(prROOT + element.fName);
+      let handle = getDrawHandle(getKindForType(element.fName));
       if (handle && !handle.for_derived)
             handle = null;
 
@@ -559,7 +570,8 @@ function addStreamerInfosForPainter(lst) {
    }
 
    lst.arr.forEach(si => {
-      if (getDrawHandle(prROOT + si.fName) !== null) return;
+      if (getDrawHandle(getKindForType(si.fName)) !== null)
+         return;
 
       const handle = checkBaseClasses(si, 0);
       if (handle) {
@@ -706,7 +718,7 @@ assignPadPainterDraw(TPadPainter);
 
 import_geo = async function() {
    return import('./geom/TGeoPainter.mjs').then(geo => {
-      const handle = getDrawHandle(prROOT + 'TGeoVolumeAssembly');
+      const handle = getDrawHandle(getKindForType('TGeoVolumeAssembly'));
       if (handle) handle.icon = 'img_geoassembly';
       return geo;
    });

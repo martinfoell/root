@@ -597,9 +597,12 @@ Int_t TTreeFormula::RegisterDimensions(Int_t code, TLeaf *leaf) {
    Int_t numberOfVarDim = 0;
 
    // Let see if we can understand the structure of this branch.
-   // Usually we have: leafname[fixed_array] leaftitle[var_array]\type
-   // (with fixed_array that can be a multi-dimension array.
-   const char *tname = leaf->GetTitle();
+   // Usually we have: leafname[fixed_array], leaftitle[var_array]/type, leaftitle[n]/d[0,10,32]
+   // (with fixed_array that can be a multi-dimensional array).
+   TString sname = leaf->GetTitle();
+   auto slash = sname.First("/");
+   sname = (slash == TString::kNPOS) ? sname : sname(0, slash);
+   const char *tname = sname.Data();
    char *leaf_dim = (char*)strstr( tname, "[" );
 
    const char *bname = leaf->GetBranch()->GetName();
@@ -2352,7 +2355,7 @@ Int_t TTreeFormula::FindLeafForExpression(const char* expression, TLeaf*& leaf, 
             final = true;
 
             // Record in 'i' what we consumed
-            i += strlen(params);
+            i += 2; // open and close parentheses
 
             // we reset work
             current = &(work[0]);
@@ -2618,8 +2621,8 @@ Int_t TTreeFormula::FindLeafForExpression(const char* expression, TLeaf*& leaf, 
 
    if (i<nchname) {
       if (strlen(right) && right[strlen(right)-1]!='.' && cname[i]!='.') {
-         // In some cases we remove a little to fast the period, we add
-         // it back if we need.  It is assumed that 'right' and the rest of
+         // In some cases we remove a little too fast the period, we add
+         // it back if we need. It is assumed that 'right' and the rest of
          // the name was cut by a delimiter, so this should be safe.
          strncat(right,".",2*kMaxLen-1-strlen(right));
       }
@@ -5859,4 +5862,22 @@ bool TTreeFormula::SwitchToFormLeafInfo(Int_t code)
       }
    }
    return true;
+}
+
+Bool_t TTreeFormula::AnalyzePrimitive(TString &, TObjArray &, Int_t &, Int_t)
+{
+  // TTreeFormula version of AnalyzePrimitive(). Does nothing. Predefined
+  // primitive functions are not supported by TTreeFormula since they
+  // operate on x[] and parameters, which are unavailable here.
+
+  return kFALSE;
+}
+
+void TTreeFormula::Optimize()
+{
+  // TTreeFormula version of Optimize(). Does nothing. TTreeFormula does not
+  // support the TFormula-style optimization since it requires variables and
+  // parameters in fixed locations, which are unavailable here.
+
+  return;
 }
