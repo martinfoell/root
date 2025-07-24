@@ -350,6 +350,12 @@ public:
          // fill a chunk by looping over the blocks in a chunk (see RChunkConstructor)
          std::size_t chunkEntry = 0;
          std::vector<std::pair<Long_t, Long_t>> BlocksInChunk = fTraining->ChunksIntervals[chunk];
+         
+         std::sort(BlocksInChunk.begin(), BlocksInChunk.end(),
+                   [](const std::pair<Long_t, Long_t>& a, const std::pair<Long_t, Long_t>& b) {
+                      return a.first < b.first;
+                   });
+
          for (std::size_t i = 0; i < BlocksInChunk.size(); i++) {
 
             // Use the block start and end entry to load into the chunk if the dataframe is not filtered
@@ -358,6 +364,7 @@ public:
                ROOT::Internal::RDF::ChangeBeginAndEndEntries(f_rdf, BlocksInChunk[i].first, BlocksInChunk[i].second);
 
                f_rdf.Foreach(func, fCols);
+               
                chunkEntry += BlocksInChunk[i].second - BlocksInChunk[i].first;
             }
 
@@ -416,6 +423,12 @@ public:
 
          std::size_t chunkEntry = 0;
          std::vector<std::pair<Long_t, Long_t>> BlocksInChunk = fValidation->ChunksIntervals[chunk];
+
+         std::sort(BlocksInChunk.begin(), BlocksInChunk.end(),
+                   [](const std::pair<Long_t, Long_t>& a, const std::pair<Long_t, Long_t>& b) {
+                      return a.first < b.first;
+                   });
+         
          for (std::size_t i = 0; i < BlocksInChunk.size(); i++) {
 
             // use the block start and end entry to load into the chunk if the dataframe is not filtered
