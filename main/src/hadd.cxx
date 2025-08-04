@@ -817,6 +817,8 @@ int main(int argc, char **argv)
       }
       merger.SetNotrees(args.fNoTrees);
       merger.SetMergeOptions(TString(merger.GetMergeOptions()) + " " + cacheSize);
+      merger.SetErrorBehavior(args.fSkipErrors ? TFileMerger::EErrorBehavior::kSkipOnError
+                                               : TFileMerger::EErrorBehavior::kFailOnError);
       merger.SetIOFeatures(features);
       Int_t fileMergerFlags = TFileMerger::kAll;
       Int_t extraFlags = ParseFilterFile(args.fObjectFilterFile, args.fObjectFilterType, merger);
@@ -852,7 +854,7 @@ int main(int argc, char **argv)
       if (maxopenedfiles > 0) {
          mergerP.SetMaxOpenedFiles(maxopenedfiles / nProcesses);
       }
-      if (!mergerP.OutputFile(partialFiles[start / step].c_str(), newcomp)) {
+      if (!mergerP.OutputFile(partialFiles[start / step].c_str(), args.fForce, newcomp)) {
          Err() << "error opening target partial file\n";
          exit(1);
       }

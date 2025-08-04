@@ -1,8 +1,9 @@
 #include "Utils.h"
 
+#include "CppInterOp/CppInterOp.h"
+
 #include "clang/AST/ASTContext.h"
 #include "clang/Basic/Version.h"
-#include "clang/Interpreter/CppInterOp.h"
 #include "clang/Frontend/CompilerInstance.h"
 #include "clang/Sema/Sema.h"
 
@@ -77,7 +78,8 @@ TEST(TypeReflectionTest, GetSizeOfType) {
   EXPECT_EQ(Cpp::GetSizeOfType(Cpp::GetVariableType(Decls[1])), 1);
   EXPECT_EQ(Cpp::GetSizeOfType(Cpp::GetVariableType(Decls[2])), 4);
   EXPECT_EQ(Cpp::GetSizeOfType(Cpp::GetVariableType(Decls[3])), 8);
-  EXPECT_EQ(Cpp::GetSizeOfType(Cpp::GetVariableType(Decls[4])), 16);
+  struct B {int a; double b;};
+  EXPECT_EQ(Cpp::GetSizeOfType(Cpp::GetVariableType(Decls[4])), sizeof(B));
   EXPECT_EQ(Cpp::GetSizeOfType(Cpp::GetTypeFromScope(Decls[5])), 0);
   EXPECT_EQ(Cpp::GetSizeOfType(Cpp::GetVariableType(Decls[6])),
             sizeof(intptr_t));
@@ -609,4 +611,12 @@ TEST(TypeReflectionTest, IsFunctionPointerType) {
       Cpp::IsFunctionPointerType(Cpp::GetVariableType(Cpp::GetNamed("f"))));
   EXPECT_FALSE(
       Cpp::IsFunctionPointerType(Cpp::GetVariableType(Cpp::GetNamed("i"))));
+}
+
+TEST(TypeReflectionTest, OperatorSpelling) {
+  EXPECT_EQ(Cpp::GetSpellingFromOperator(Cpp::OP_Less), "<");
+  EXPECT_EQ(Cpp::GetSpellingFromOperator(Cpp::OP_Plus), "+");
+  EXPECT_EQ(Cpp::GetOperatorFromSpelling("->"), Cpp::OP_Arrow);
+  EXPECT_EQ(Cpp::GetOperatorFromSpelling("()"), Cpp::OP_Call);
+  EXPECT_EQ(Cpp::GetOperatorFromSpelling("invalid"), Cpp::OP_None);
 }

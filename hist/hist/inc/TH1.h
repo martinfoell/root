@@ -281,7 +281,6 @@ private:
 
       // Update the statistics
       ResetStats();
-      fEntries = std::accumulate(dataArray, dataArray + newSize, 0.0);
    }
 
    template <typename T>
@@ -359,7 +358,6 @@ private:
 
       // Update the statistics
       ResetStats();
-      fEntries += std::accumulate(values.begin(), values.end(), 0.0);
    }
 
    template <typename T>
@@ -596,6 +594,7 @@ public:
    virtual Bool_t   Multiply(TF1 *f1, Double_t c1=1);
    virtual Bool_t   Multiply(const TH1 *h1);
    virtual Bool_t   Multiply(const TH1 *h1, const TH1 *h2, Double_t c1=1, Double_t c2=1, Option_t *option="");
+   virtual void     Normalize(Option_t *option=""); // *MENU*
            void     Paint(Option_t *option = "") override;
            void     Print(Option_t *option = "") const override;
    virtual void     PutStats(Double_t *stats);

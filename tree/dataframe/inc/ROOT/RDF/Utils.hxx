@@ -144,6 +144,7 @@ std::string
 ColumnName2ColumnTypeName(const std::string &colName, TTree *, RDataSource *, RDefineBase *, bool vector2RVec = true);
 
 char TypeName2ROOTTypeName(const std::string &b);
+char TypeID2ROOTTypeName(const std::type_info &tid);
 
 unsigned int GetNSlots();
 
@@ -215,22 +216,12 @@ bool IsInternalColumn(std::string_view colName);
 /// Get optimal column width for printing a table given the names and the desired minimal space between columns
 unsigned int GetColumnWidth(const std::vector<std::string>& names, const unsigned int minColumnSpace = 8u);
 
-// We could just check `#ifdef __cpp_lib_hardware_interference_size`, but at least on Mac 11
-// libc++ defines that macro but is missing the actual feature, so we use an ad-hoc ROOT macro instead.
-// See the relevant entry in cmake/modules/RootConfiguration.cmake for more info.
-#ifdef R__HAS_HARDWARE_INTERFERENCE_SIZE
-   // C++17 feature (so we can use inline variables)
-   inline constexpr std::size_t kCacheLineSize = std::hardware_destructive_interference_size;
-#else
-   // safe bet: assume the typical 64 bytes
-   static constexpr std::size_t kCacheLineSize = 64;
-#endif
-
 /// Stepping through CacheLineStep<T> values in a vector<T> brings you to a new cache line.
 /// Useful to avoid false sharing.
 template <typename T>
 constexpr std::size_t CacheLineStep() {
-   return (kCacheLineSize + sizeof(T) - 1) / sizeof(T);
+   constexpr std::size_t cacheLineSize = R__HARDWARE_INTERFERENCE_SIZE;
+   return (cacheLineSize + sizeof(T) - 1) / sizeof(T);
 }
 
 void CheckReaderTypeMatches(const std::type_info &colType, const std::type_info &requestedType,
@@ -344,6 +335,13 @@ auto MakeAliasedSharedPtr(T *rawPtr)
  * be created when we use the FromSpec factory function.
  */
 ROOT::RDF::Experimental::RDatasetSpec RetrieveSpecFromJson(const std::string &jsonFile);
+
+/**
+ * Tag to let data sources use the native data type when creating a column reader.
+ *
+ * See usage of this in RNTupleDS
+ */
+struct UseNativeDataType {};
 
 } // end NS RDF
 } // end NS Internal

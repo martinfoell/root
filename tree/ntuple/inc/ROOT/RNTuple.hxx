@@ -43,6 +43,8 @@ RNTuple CreateAnchor(std::uint16_t versionEpoch, std::uint16_t versionMajor, std
 \ingroup NTuple
 \brief Representation of an RNTuple data set in a ROOT file
 
+\note This is the documentation for the RNTuple anchor class. For a generic introduction to RNTuple, see \ref NTuple "the RNTuple Introduction". For reading RNTuples, see RNTupleReader. For writing RNTuples, see RNTupleWriter.
+
 The class points to the header and footer keys, which in turn have the references to the pages (via page lists).
 Only the RNTuple key will be listed in the list of keys. Like TBaskets, the pages are "invisible" keys.
 Byte offset references in the RNTuple header and footer reference directly the data part of page records,
@@ -76,7 +78,7 @@ public:
    static constexpr std::uint16_t kVersionEpoch = 1;
    static constexpr std::uint16_t kVersionMajor = 0;
    static constexpr std::uint16_t kVersionMinor = 0;
-   static constexpr std::uint16_t kVersionPatch = 1;
+   static constexpr std::uint16_t kVersionPatch = 2;
 
 private:
    /// Version of the RNTuple binary format that the writer supports (see specification).

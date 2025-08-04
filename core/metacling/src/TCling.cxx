@@ -115,7 +115,7 @@ clang/LLVM technology.
 #include "cling/Utils/SourceNormalization.h"
 #include "cling/Interpreter/Exception.h"
 
-#include "clang/Interpreter/CppInterOp.h"
+#include <CppInterOp/CppInterOp.h>
 
 #include "llvm/IR/GlobalValue.h"
 #include "llvm/IR/Module.h"
@@ -1011,6 +1011,24 @@ bool TClingLookupHelper__ExistingTypeCheck(const std::string &tname,
 }
 
 ////////////////////////////////////////////////////////////////////////////////
+/// Check if the class name is present in TClassTable.
+///
+/// \param[in] tname class name to check.
+/// \param[out] result If a class name has an alternative name registered in
+///                    TClassTable, it will be copied into this string.
+bool TClingLookupHelper__CheckInClassTable(const std::string &tname, std::string &result)
+{
+   result.clear();
+
+   if (gROOT->GetListOfClasses()->FindObject(tname.c_str()) || TClassTable::Check(tname.c_str(), result)) {
+      // This is a known class.
+      return true;
+   }
+
+   return false;
+}
+
+////////////////////////////////////////////////////////////////////////////////
 
 TCling::TUniqueString::TUniqueString(Long64_t size)
 {
@@ -1408,6 +1426,7 @@ TCling::TCling(const char *name, const char *title, const char* const argv[], vo
 
       clingArgsStorage.push_back("-Wno-undefined-inline");
       clingArgsStorage.push_back("-fsigned-char");
+      clingArgsStorage.push_back("-fsized-deallocation");
       // The -O1 optimization flag has nasty side effects on Windows (32 and 64 bit)
       // See the GitHub issues #9809 and #9944
       // TODO: to be reviewed after the upgrade of LLVM & Clang
@@ -1585,10 +1604,9 @@ TCling::TCling(const char *name, const char *title, const char* const argv[], vo
 
    // We are now ready (enough is loaded) to init the list of opaque typedefs.
    fNormalizedCtxt = new ROOT::TMetaUtils::TNormalizedCtxt(fInterpreter->getLookupHelper());
-   fLookupHelper = new ROOT::TMetaUtils::TClingLookupHelper(*fInterpreter, *fNormalizedCtxt,
-                                                            TClingLookupHelper__ExistingTypeCheck,
-                                                            TClingLookupHelper__AutoParse,
-                                                            &fIsShuttingDown);
+   fLookupHelper = new ROOT::TMetaUtils::TClingLookupHelper(
+      *fInterpreter, *fNormalizedCtxt, TClingLookupHelper__ExistingTypeCheck, TClingLookupHelper__CheckInClassTable,
+      TClingLookupHelper__AutoParse, &fIsShuttingDown);
    TClassEdit::Init(fLookupHelper);
 
    // Disallow auto-parsing in rootcling
@@ -7729,6 +7747,8 @@ void TCling::CodeComplete(const std::string& line, size_t& cursor,
 /// Get the interpreter value corresponding to the statement.
 int TCling::Evaluate(const char* code, TInterpreterValue& value)
 {
+   R__LOCKGUARD_CLING(gInterpreterMutex);
+
    auto V = reinterpret_cast<cling::Value*>(value.GetValAddr());
    auto compRes = fInterpreter->evaluate(code, *V);
    return compRes!=cling::Interpreter::kSuccess ? 0 : 1 ;
@@ -8949,6 +8969,10 @@ Long_t TCling::FuncTempInfo_Property(FuncTempInfo_t *ft_info) const
    }
 
    const clang::FunctionDecl *fd = ft->getTemplatedDecl();
+
+   if (fd && fd->getStorageClass() == clang::SC_Static)
+      property |= kIsStatic;
+
    if (const clang::CXXMethodDecl *md =
        llvm::dyn_cast<clang::CXXMethodDecl>(fd)) {
       if (md->getMethodQualifiers().hasConst()) {

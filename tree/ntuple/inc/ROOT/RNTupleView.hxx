@@ -17,7 +17,8 @@
 #include <ROOT/RError.hxx>
 #include <ROOT/RField.hxx>
 #include <ROOT/RNTupleRange.hxx>
-#include <ROOT/RNTupleUtil.hxx>
+#include <ROOT/RNTupleTypes.hxx>
+#include <ROOT/RNTupleUtils.hxx>
 #include <string_view>
 
 #include <iterator>
@@ -264,7 +265,7 @@ protected:
    {
       const auto &desc = pageSource.GetSharedDescriptorGuard().GetRef();
       const auto &fieldDesc = desc.GetFieldDescriptor(fieldId);
-      if (fieldDesc.GetTypeName() != ROOT::RField<T>::TypeName()) {
+      if (!Internal::IsMatchingFieldType<T>(fieldDesc.GetTypeName())) {
          throw RException(R__FAIL("type mismatch for field " + fieldDesc.GetFieldName() + ": " +
                                   fieldDesc.GetTypeName() + " vs. " + ROOT::RField<T>::TypeName()));
       }
@@ -345,6 +346,13 @@ private:
       return fieldId;
    }
 
+   std::uint64_t GetCardinalityValue() const
+   {
+      // We created the RValue and know its type, avoid extra checks.
+      void *ptr = fValue.GetPtr<void>().get();
+      return *static_cast<RNTupleCardinality<std::uint64_t> *>(ptr);
+   }
+
 public:
    RNTupleCollectionView(const RNTupleCollectionView &other) = delete;
    RNTupleCollectionView(RNTupleCollectionView &&other) = default;
@@ -413,14 +421,14 @@ public:
    std::uint64_t operator()(ROOT::NTupleSize_t globalIndex)
    {
       fValue.Read(globalIndex);
-      return fValue.GetRef<std::uint64_t>();
+      return GetCardinalityValue();
    }
 
    /// \see RNTupleView::operator()(RNTupleLocalIndex)
    std::uint64_t operator()(RNTupleLocalIndex localIndex)
    {
       fValue.Read(localIndex);
-      return fValue.GetRef<std::uint64_t>();
+      return GetCardinalityValue();
    }
 };
 

@@ -207,9 +207,23 @@ TTreeIndex::TTreeIndex(const TTree *T, const char *majorname, const char *minorn
    //TMath::Sort(fN,w,fIndex,0);
    fIndexValues = new Long64_t[fN];
    fIndexValuesMinor = new Long64_t[fN];
-   for (i=0;i<fN;i++) {
+   bool duplicatedKeys = false;
+   for (i = 0; i < fN; i++) {
       fIndexValues[i] = tmp_major[fIndex[i]];
       fIndexValuesMinor[i] = tmp_minor[fIndex[i]];
+      const bool checkDuplicates = i > 0 && (!duplicatedKeys || gDebug >= 1);
+      if (checkDuplicates) {
+         if (fIndexValues[i - 1] == fIndexValues[i] && fIndexValuesMinor[i - 1] == fIndexValuesMinor[i]) {
+            Error("TTreeIndex",
+                  "In entry %lld, a duplicate key was found value at (%s, %s) = (%lld, %lld)",
+                  i, fMajorName.Data(), fMinorName.Data(), fIndexValues[i], fIndexValuesMinor[i]
+                 );
+            if (gDebug < 1) {
+               Warning("TTreeIndex", "Further potential duplicates won't be checked, use gDebug >= 1 to check all.");
+            }
+            duplicatedKeys = true;
+         }
+      }
    }
 
    delete [] tmp_major;
@@ -315,8 +329,11 @@ void TTreeIndex::Append(const TVirtualIndex *add, bool delaySort )
 
 
 ////////////////////////////////////////////////////////////////////////////////
-/// conversion from old 64bit indexes
-/// return true if index was converted
+/// Conversion from old 64bit indexes.
+/// Before, major and minor were stored as a single 64-bit register, with
+/// bits [0,30] for minor and bits [31,64] for major.
+/// Now, both minor and major have their own 64-bit register.
+/// \return true if index was converted
 
 bool TTreeIndex::ConvertOldToNew()
 {
@@ -339,6 +356,7 @@ bool TTreeIndex::ConvertOldToNew()
 /// In case this (friend) Tree and 'master' do not share an index with the same
 /// major and minor name, the entry serial number in the (friend) tree
 /// and in the master Tree are assumed to be the same
+/// \note An internal (intermediate) cast to double before storage as Long64_t
 
 Long64_t TTreeIndex::GetEntryNumberFriend(const TTree *parent)
 {
@@ -401,11 +419,16 @@ Long64_t TTreeIndex::FindValues(Long64_t major, Long64_t minor) const
 /// Return entry number corresponding to major and minor number.
 /// Note that this function returns only the entry number, not the data
 /// To read the data corresponding to an entry number, use TTree::GetEntryWithIndex
-/// the BuildIndex function has created a table of Double_t* of sorted values
-/// corresponding to val = major<<31 + minor;
+/// the BuildIndex function has created two tables of Long64_t sorted values
+/// (with an internal intermediate cast to LongDouble)
 /// The function performs binary search in this sorted table.
 /// If it finds a pair that maches val, it returns directly the
-/// index in the table.
+/// index in the table, otherwise it returns -1.
+/// \warning Due to internal architecture details, the maximum value for `(major, minor)`
+/// for which the function works correctly and consistently in all platforms is `0xFFFFFFFFFFFF0`, which is less than `kMaxLong64`.
+/// A runtime-warning will be printed if values above this range are detected to lead to a corresponding precision loss in your current architecture:
+/// `Warning in <TTreeIndex::TTreeIndex>: In tree entry, value event possibly out of range for internal long double`
+///
 /// If an entry corresponding to major and minor is not found, the function
 /// returns the index of the major,minor pair immediately lower than the
 /// requested value, ie it will return -1 if the pair is lower than
@@ -416,7 +439,6 @@ Long64_t TTreeIndex::FindValues(Long64_t major, Long64_t minor) const
 Long64_t TTreeIndex::GetEntryNumberWithBestIndex(Long64_t major, Long64_t minor) const
 {
    if (fN == 0) return -1;
-
    Long64_t pos = FindValues(major, minor);
    if( pos < fN && fIndexValues[pos] == major && fIndexValuesMinor[pos] == minor )
       return fIndex[pos];
@@ -430,11 +452,13 @@ Long64_t TTreeIndex::GetEntryNumberWithBestIndex(Long64_t major, Long64_t minor)
 /// Return entry number corresponding to major and minor number.
 /// Note that this function returns only the entry number, not the data
 /// To read the data corresponding to an entry number, use TTree::GetEntryWithIndex
-/// the BuildIndex function has created a table of Double_t* of sorted values
-/// corresponding to val = major<<31 + minor;
+/// the BuildIndex function has created two tables of Long64_t sorted values
+/// (with an internal intermediate cast to LongDouble)
 /// The function performs binary search in this sorted table.
 /// If it finds a pair that maches val, it returns directly the
 /// index in the table, otherwise it returns -1.
+/// \warning Due to internal architecture details, the maximum value for `(major, minor)`
+/// for which the function works correctly and consistently in all platforms is `0xFFFFFFFFFFFF0`, which is less than `kMaxLong64`.
 ///
 /// See also GetEntryNumberWithBestIndex
 

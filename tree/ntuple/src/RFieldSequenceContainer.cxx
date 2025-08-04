@@ -104,12 +104,12 @@ std::unique_ptr<ROOT::RFieldBase::RDeleter> ROOT::RArrayField::GetDeleter() cons
 
 std::vector<ROOT::RFieldBase::RValue> ROOT::RArrayField::SplitValue(const RValue &value) const
 {
-   auto arrayPtr = value.GetPtr<unsigned char>().get();
+   auto valuePtr = value.GetPtr<void>();
+   auto arrayPtr = static_cast<unsigned char *>(valuePtr.get());
    std::vector<RValue> result;
    result.reserve(fArrayLength);
    for (unsigned i = 0; i < fArrayLength; ++i) {
-      result.emplace_back(
-         fSubfields[0]->BindValue(std::shared_ptr<void>(value.GetPtr<void>(), arrayPtr + (i * fItemSize))));
+      result.emplace_back(fSubfields[0]->BindValue(std::shared_ptr<void>(valuePtr, arrayPtr + (i * fItemSize))));
    }
    return result;
 }
@@ -160,12 +160,7 @@ std::size_t EvalRVecValueSize(std::size_t alignOfT, std::size_t sizeOfT, std::si
 
    // mimic the logic of RVecInlineStorageSize, but at runtime
    const auto inlineStorageSz = [&] {
-#ifdef R__HAS_HARDWARE_INTERFERENCE_SIZE
-      // hardware_destructive_interference_size is a C++17 feature but many compilers do not implement it yet
-      constexpr unsigned cacheLineSize = std::hardware_destructive_interference_size;
-#else
-      constexpr unsigned cacheLineSize = 64u;
-#endif
+      constexpr unsigned cacheLineSize = R__HARDWARE_INTERFERENCE_SIZE;
       const unsigned elementsPerCacheLine = (cacheLineSize - dataMemberSz) / sizeOfT;
       constexpr unsigned maxInlineByteSize = 1024;
       const unsigned nElements =
@@ -469,33 +464,38 @@ void ROOT::RRVecField::AcceptVisitor(ROOT::Detail::RFieldVisitor &visitor) const
 
 //------------------------------------------------------------------------------
 
-ROOT::RVectorField::RVectorField(std::string_view fieldName, std::unique_ptr<RFieldBase> itemField, bool isUntyped)
-   : ROOT::RFieldBase(fieldName, isUntyped ? "" : "std::vector<" + itemField->GetTypeName() + ">",
+ROOT::RVectorField::RVectorField(std::string_view fieldName, std::unique_ptr<RFieldBase> itemField,
+                                 std::optional<std::string_view> emulatedFromType)
+   : ROOT::RFieldBase(fieldName, emulatedFromType ? *emulatedFromType : "std::vector<" + itemField->GetTypeName() + ">",
                       ROOT::ENTupleStructure::kCollection, false /* isSimple */),
      fItemSize(itemField->GetValueSize()),
      fNWritten(0)
 {
+   if (emulatedFromType && !emulatedFromType->empty())
+      fTraits |= kTraitEmulatedField;
+
    if (!(itemField->GetTraits() & kTraitTriviallyDestructible))
       fItemDeleter = GetDeleterOf(*itemField);
    Attach(std::move(itemField));
 }
 
 ROOT::RVectorField::RVectorField(std::string_view fieldName, std::unique_ptr<RFieldBase> itemField)
-   : RVectorField(fieldName, std::move(itemField), false)
+   : RVectorField(fieldName, std::move(itemField), {})
 {
 }
 
 std::unique_ptr<ROOT::RVectorField>
 ROOT::RVectorField::CreateUntyped(std::string_view fieldName, std::unique_ptr<RFieldBase> itemField)
 {
-   return std::unique_ptr<ROOT::RVectorField>(new RVectorField(fieldName, std::move(itemField), true));
+   return std::unique_ptr<ROOT::RVectorField>(new RVectorField(fieldName, std::move(itemField), ""));
 }
 
 std::unique_ptr<ROOT::RFieldBase> ROOT::RVectorField::CloneImpl(std::string_view newName) const
 {
    auto newItemField = fSubfields[0]->Clone(fSubfields[0]->GetFieldName());
-   return std::unique_ptr<ROOT::RVectorField>(
-      new RVectorField(newName, std::move(newItemField), GetTypeName().empty()));
+   auto isUntyped = GetTypeName().empty() || ((fTraits & kTraitEmulatedField) != 0);
+   auto emulatedFromType = isUntyped ? std::make_optional(GetTypeName()) : std::nullopt;
+   return std::unique_ptr<ROOT::RVectorField>(new RVectorField(newName, std::move(newItemField), emulatedFromType));
 }
 
 std::size_t ROOT::RVectorField::AppendImpl(const void *from)
@@ -605,15 +605,15 @@ std::unique_ptr<ROOT::RFieldBase::RDeleter> ROOT::RVectorField::GetDeleter() con
 
 std::vector<ROOT::RFieldBase::RValue> ROOT::RVectorField::SplitValue(const RValue &value) const
 {
-   auto vec = value.GetPtr<std::vector<char>>();
+   auto valuePtr = value.GetPtr<void>();
+   auto *vec = static_cast<std::vector<char> *>(valuePtr.get());
    R__ASSERT(fItemSize > 0);
    R__ASSERT((vec->size() % fItemSize) == 0);
    auto nItems = vec->size() / fItemSize;
    std::vector<RValue> result;
    result.reserve(nItems);
    for (unsigned i = 0; i < nItems; ++i) {
-      result.emplace_back(
-         fSubfields[0]->BindValue(std::shared_ptr<void>(value.GetPtr<void>(), vec->data() + (i * fItemSize))));
+      result.emplace_back(fSubfields[0]->BindValue(std::shared_ptr<void>(valuePtr, vec->data() + (i * fItemSize))));
    }
    return result;
 }

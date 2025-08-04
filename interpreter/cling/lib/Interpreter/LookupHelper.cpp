@@ -698,13 +698,6 @@ namespace cling {
                   TagDecl* TD = TagTy->getDecl();
                   if (TD) {
                     TheDecl = TD->getDefinition();
-                    // NOTE: if (TheDecl) ... check for theDecl->isInvalidDecl()
-                    if (TD && TD->isInvalidDecl()) {
-                      printf("Warning: FindScope got an invalid tag decl\n");
-                    }
-                    if (TheDecl && TheDecl->isInvalidDecl()) {
-                      printf("ERROR: FindScope about to return an invalid decl\n");
-                    }
                     if (!TheDecl && instantiateTemplate) {
 
                       // Make sure it is not just forward declared, and
@@ -1698,7 +1691,9 @@ namespace cling {
         clang::QualType QT = clang::Sema::GetTypeFromParser(Res.get(), &TSI);
         QT = QT.getCanonicalType();
         {
-          ExprValueKind VK = VK_PRValue;
+          // XValue is an object that can be "moved" whereas PRValue is temporary value
+          // This enables overloads that require the object to be moved
+          ExprValueKind VK = VK_XValue;
           if (QT->getAs<LValueReferenceType>()) {
             VK = VK_LValue;
           }

@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.10 FATAL_ERROR)
+cmake_minimum_required(VERSION 3.20 FATAL_ERROR)
 
 project(roottest)
 
@@ -233,6 +233,22 @@ endif()
 set(ROOTTEST_ENV_LIBRARYPATH ${ROOT_LIBRARY_DIR})
 set(ROOTTEST_ENV_EXTRA)
 
+# Optionally, add Fortran link directories. This is needed in particular for
+# macOS, where the path of the Fortran library might not be in the default
+# DYLD_LIBRARY_PATH, but it gets picked up with enable_language(Fortran).
+if(APPLE AND fortran)
+  # Convert Fortran link dirs to colon-separated string
+  string(REPLACE ";" ":" FORTRAN_LINK_PATH "${CMAKE_Fortran_IMPLICIT_LINK_DIRECTORIES}")
+
+  # Append to ROOTTEST_ENV_LIBRARYPATH
+  set(ROOTTEST_ENV_LIBRARYPATH "${ROOTTEST_ENV_LIBRARYPATH}:${FORTRAN_LINK_PATH}")
+
+  # Deduplicate ROOTTEST_ENV_LIBRARYPATH
+  string(REPLACE ":" ";" _tmp "${ROOTTEST_ENV_LIBRARYPATH}")
+  list(REMOVE_DUPLICATES _tmp)
+  string(REPLACE ";" ":" ROOTTEST_ENV_LIBRARYPATH "${_tmp}")
+endif()
+
 if(MSVC)
   set(ROOTTEST_ENVIRONMENT
       ROOTSYS=${ROOTSYS}
@@ -250,14 +266,11 @@ else()
   endif()
 endif()
 
-# Resolve symbolic links for the ROOTTEST_DIR variable.
-get_filename_component(ROOTTEST_DIR ${CMAKE_CURRENT_SOURCE_DIR} ABSOLUTE)
-
 # Set some variables that customizes the behaviour of the ROOT macros
 set(CMAKE_ROOTTEST_DICT ON)
 
 # Set the CMake module path. Here are all the custom CMake modules.
-set(CMAKE_MODULE_PATH "${CMAKE_MODULE_PATH};${ROOTTEST_DIR}/cmake/modules")
+set(CMAKE_MODULE_PATH "${CMAKE_MODULE_PATH};${ROOT_SOURCE_DIR}/roottest/cmake/modules")
 
 # Find python.
 if(ROOT_pyroot_FOUND)
@@ -288,7 +301,6 @@ link_directories(${ROOT_LIBRARY_DIR})
 set(CMAKE_MACOSX_RPATH TRUE)              # use RPATH for MacOSX
 
 include(RoottestCTest)
-include(RoottestMacros)
 include(SearchInstalledSoftwareRoottest)
 
 message("-- Scanning subdirectories for tests...")

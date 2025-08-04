@@ -67,13 +67,25 @@ if( CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR )
 include(GNUInstallDirs)
   ## Define supported version of clang and llvm
 
-  set(CLANG_MIN_SUPPORTED 13.0)
+if (CPPINTEROP_USE_CLING)
+  set(CLANG_MIN_SUPPORTED 18.0)
+else()
+  set(CLANG_MIN_SUPPORTED 16.0)
+endif(CPPINTEROP_USE_CLING)
   set(CLANG_MAX_SUPPORTED "20.1.x")
   set(CLANG_VERSION_UPPER_BOUND 21.0.0)
-  set(LLD_MIN_SUPPORTED 13.0)
+if (CPPINTEROP_USE_CLING)
+  set(LLD_MIN_SUPPORTED 18.0)
+else()
+  set(LLD_MIN_SUPPORTED 16.0)
+endif(CPPINTEROP_USE_CLING)
   set(LLD_MAX_SUPPORTED "20.1.x")
   set(LLD_VERSION_UPPER_BOUND 21.0.0)
-  set(LLVM_MIN_SUPPORTED 13.0)
+if (CPPINTEROP_USE_CLING)
+  set(LLVM_MIN_SUPPORTED 18.0)
+else()
+  set(LLVM_MIN_SUPPORTED 16.0)
+endif(CPPINTEROP_USE_CLING)
   set(LLVM_MAX_SUPPORTED "20.1.x")
   set(LLVM_VERSION_UPPER_BOUND 21.0.0)
 
@@ -230,21 +242,12 @@ endif()
   message(STATUS "Found supported version: Clang ${CLANG_PACKAGE_VERSION}")
   message(STATUS "Using ClangConfig.cmake in: ${Clang_DIR}")
 
-  ## Clang 13 require c++14 or later, Clang 16 require c++17 or later.
-  if (CLANG_VERSION_MAJOR GREATER_EQUAL 16)
-    if (NOT CMAKE_CXX_STANDARD)
-      set (CMAKE_CXX_STANDARD 17)
-    endif()
-    if (CMAKE_CXX_STANDARD LESS 17)
-      message(fatal "LLVM/CppInterOp requires c++17 or later")
-    endif()
-  elseif (CLANG_VERSION_MAJOR GREATER_EQUAL 13)
-    if (NOT CMAKE_CXX_STANDARD)
-      set (CMAKE_CXX_STANDARD 14)
-    endif()
-    if (CMAKE_CXX_STANDARD LESS 14)
-      message(fatal "LLVM/CppInterOp requires c++14 or later")
-    endif()
+  ## Clang 16 require c++17 or later.
+  if (NOT CMAKE_CXX_STANDARD)
+    set (CMAKE_CXX_STANDARD 17)
+  endif()
+  if (CMAKE_CXX_STANDARD LESS 17)
+    message(fatal "LLVM/CppInterOp requires c++17 or later")
   endif()
 
   ## Find supported Cling
@@ -400,33 +403,6 @@ configure_file(
   ${CMAKE_CURRENT_SOURCE_DIR}/cmake/CppInterOp/CppInterOpConfigVersion.cmake.in
   ${CMAKE_CURRENT_BINARY_DIR}/lib/cmake/CppInterOp/CppInterOpConfigVersion.cmake
   @ONLY)
-install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/lib/cmake/CppInterOp/
-  DESTINATION lib/cmake/CppInterOp
-  FILES_MATCHING
-  PATTERN "*.cmake"
-  )
-
-
-install(DIRECTORY include/
-  DESTINATION include
-  FILES_MATCHING
-  PATTERN "*.def"
-  PATTERN "*.h"
-  PATTERN ".svn" EXCLUDE
-  )
-
-install(DIRECTORY tools/
-  DESTINATION include/CppInterOp/tools
-  FILES_MATCHING
-  PATTERN "*.h"
-)
-
-install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/include/
-  DESTINATION include
-  FILES_MATCHING
-  PATTERN "CMakeFiles" EXCLUDE
-  PATTERN "*.inc"
-  )
 
 add_definitions( -D_GNU_SOURCE )
 

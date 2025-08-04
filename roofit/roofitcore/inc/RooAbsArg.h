@@ -533,7 +533,6 @@ protected:
    virtual bool isValid() const ;
 
    virtual void getParametersHook(const RooArgSet* /*nset*/, RooArgSet* /*list*/, bool /*stripDisconnected*/) const {} ;
-   virtual void getObservablesHook(const RooArgSet* /*nset*/, RooArgSet* /*list*/) const {} ;
 
    void clearValueAndShapeDirty() const {
      _valueDirty=false ;
@@ -667,9 +666,6 @@ private:
 
   mutable bool _localNoInhibitDirty = false; //! Prevent 'AlwaysDirty' mode for this node
 
-/*   RooArgSet _leafNodeCache ; //! Cached leaf nodes */
-/*   RooArgSet _branchNodeCache //! Cached branch nodes     */
-
   mutable RooWorkspace *_myws = nullptr; //! In which workspace do I live, if any
 
   std::size_t _dataToken = std::numeric_limits<std::size_t>::max(); //! Set by the RooFitDriver for this arg to retrieve its result in the run context
@@ -679,9 +675,8 @@ private:
   friend class RooFitResult;
 
  public:
-  static std::map<RooAbsArg*,std::unique_ptr<TRefArray>> _ioEvoList; // temporary holding list for proxies needed in schema evolution
- protected:
-  static std::stack<RooAbsArg*> _ioReadStack ; // reading stack
+  // Used internally for schema evolution.
+  static void addToIoEvoList(RooAbsArg *newObj, TRefArray const &onfileProxyList);
   /// \endcond
 
  private:

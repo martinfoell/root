@@ -1,10 +1,10 @@
 import py, sys, pytest, os
 from pytest import mark, raises
-from support import setup_make, ispypy
+from support import setup_make, ispypy, IS_MAC_ARM
 
 
 currpath = os.getcwd()
-test_dct = currpath + "/cpp11featuresDict"
+test_dct = currpath + "/libcpp11featuresDict"
 
 
 class TestCPP11FEATURES:
