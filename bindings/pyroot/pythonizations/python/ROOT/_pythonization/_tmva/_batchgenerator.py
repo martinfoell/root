@@ -96,6 +96,7 @@ class BaseGenerator:
         shuffle: bool = True,
         drop_remainder: bool = True,
         set_seed: int = 0,
+        load_eager: bool = False,
     ):
         """Wrapper around the Cpp RBatchGenerator
 
@@ -234,6 +235,7 @@ class BaseGenerator:
             shuffle,
             drop_remainder,
             set_seed,
+            load_eager,
         )
 
         atexit.register(self.DeActivate)
@@ -666,6 +668,7 @@ def CreateNumPyGenerators(
     shuffle: bool = True,
     drop_remainder=True,
     set_seed: int = 0,
+    load_eager: bool = False,
 ) -> Tuple[TrainRBatchGenerator, ValidationRBatchGenerator]:
     """
     Return two batch generators based on the given ROOT file and tree or RDataFrame
@@ -734,7 +737,8 @@ def CreateNumPyGenerators(
         max_chunks,
         shuffle,
         drop_remainder,
-        set_seed,        
+        set_seed,
+        load_eager,
     )
 
     train_generator = TrainRBatchGenerator(
@@ -765,7 +769,8 @@ def CreateTFDatasets(
     max_chunks: int = 0,
     shuffle: bool = True,
     drop_remainder=True,
-    set_seed: int = 0,        
+    set_seed: int = 0,
+    load_eager: bool = False,
 ) -> Tuple[tf.data.Dataset, tf.data.Dataset]:
     """
     Return two Tensorflow Datasets based on the given ROOT file and tree or RDataFrame
@@ -833,7 +838,8 @@ def CreateTFDatasets(
         max_chunks,
         shuffle,
         drop_remainder,
-        set_seed,        
+        set_seed,
+        load_eager,
     )
 
     train_generator = TrainRBatchGenerator(
@@ -914,7 +920,8 @@ def CreatePyTorchGenerators(
     max_chunks: int = 0,
     shuffle: bool = True,
     drop_remainder=True,
-    set_seed: int = 0,        
+    set_seed: int = 0,
+    load_eager: bool = False,
 ) -> Tuple[TrainRBatchGenerator, ValidationRBatchGenerator]:
     """
     Return two Tensorflow Datasets based on the given ROOT file and tree or RDataFrame
@@ -980,7 +987,8 @@ def CreatePyTorchGenerators(
         max_chunks,
         shuffle,
         drop_remainder,
-        set_seed,        
+        set_seed,
+        load_eager,
     )
 
     train_generator = TrainRBatchGenerator(
