@@ -19,6 +19,7 @@
 #include "ROOT/RDF/RDatasetSpec.hxx"
 #include "TMVA/BatchGenerator/RChunkLoader.hxx"
 #include "TMVA/BatchGenerator/RBatchLoader.hxx"
+#include "TMVA/BatchGenerator/RDatasetLoader.hxx"
 #include "TROOT.h"
 
 #include <cmath>
@@ -61,7 +62,9 @@ private:
    float fValidationSplit;
 
    std::unique_ptr<RChunkLoader<Args...>> fChunkLoader;
+   std::unique_ptr<RDatasetLoader<Args...>> fDatasetLoader;
    std::unique_ptr<RBatchLoader> fBatchLoader;
+   // std::unique_ptr<RBatchLoader> fBatchLoaderDataset;
 
    std::unique_ptr<std::thread> fLoadingThread;
 
@@ -77,7 +80,8 @@ private:
    bool fIsActive{false}; // Whether the loading thread is active
    bool fNotFiltered;
    bool fUseWholeFile;
-
+   bool fLoadEager;
+   
    bool fEpochActive{false};
    bool fTrainingEpochActive{false};
    bool fValidationEpochActive{false};
@@ -106,12 +110,15 @@ private:
    TMVA::Experimental::RTensor<float> fValidationTensor;
    TMVA::Experimental::RTensor<float> fValidationChunkTensor;
 
+   TMVA::Experimental::RTensor<float> fTrainDatasetTensor;
+   TMVA::Experimental::RTensor<float> fValidationDatasetTensor;   
+
 public:
    RBatchGenerator(ROOT::RDF::RNode &rdf, const std::size_t chunkSize, const std::size_t blockSize,
                    const std::size_t batchSize, const std::vector<std::string> &cols,
                    const std::vector<std::size_t> &vecSizes = {}, const float vecPadding = 0.0,
                    const float validationSplit = 0.0, const std::size_t maxChunks = 0, bool shuffle = true,
-                   bool dropRemainder = true, const std::size_t setSeed = 0)
+                   bool dropRemainder = true, const std::size_t setSeed = 0, bool loadEager = false)
 
       : f_rdf(rdf),
         fCols(cols),
@@ -122,6 +129,7 @@ public:
         fMaxChunks(maxChunks),
         fDropRemainder(dropRemainder),
         fSetSeed(setSeed),
+        fLoadEager(loadEager),
         fShuffle(shuffle),
         fNotFiltered(f_rdf.GetFilterNames().empty()),
         fUseWholeFile(maxChunks == 0),
@@ -129,9 +137,13 @@ public:
         fTrainTensor({0, 0}),
         fTrainChunkTensor({0, 0}),
         fValidationTensor({0, 0}),
-        fValidationChunkTensor({0, 0})
+        fValidationChunkTensor({0, 0}),
+        fTrainDatasetTensor({0, 0}),
+        fValidationDatasetTensor({0, 0})
+   
    {
 
+      // [TODO] create vector of entries if not filtered for speedup
       fNumEntries = f_rdf.Count().GetValue();
       fEntries = f_rdf.Take<ULong64_t>("rdfentry_");
 
@@ -140,14 +152,6 @@ public:
       
       // add the last element in entries to not go out of range when filling chunks
       fEntries->push_back((*fEntries)[fNumEntries - 1] + 1);
-
-      fChunkLoader =
-         std::make_unique<RChunkLoader<Args...>>(f_rdf, fNumEntries, fEntries, fChunkSize, fBlockSize, fValidationSplit,
-                                                 fCols, vecSizes, vecPadding, fShuffle, fSetSeed);
-      fBatchLoader = std::make_unique<RBatchLoader>(fChunkSize, fBatchSize, fNumChunkCols);
-
-      // split the dataset into training and validation sets
-      fChunkLoader->SplitDataset();
 
       // number of training and validation entries after the split
       fNumValidationEntries = static_cast<std::size_t>(fValidationSplit * fNumEntries);
@@ -172,12 +176,33 @@ public:
          fNumValidationBatches = fNumFullValidationBatches + fNumLeftoverValidationBatches;
       }
 
-      // number of training and validation chunks, calculated in RChunkConstructor
-      fNumTrainingChunks = fChunkLoader->GetNumTrainingChunks();
-      fNumValidationChunks = fChunkLoader->GetNumValidationChunks();
+      
+      if (loadEager) {
+         fDatasetLoader =
+            std::make_unique<RDatasetLoader<Args...>>(f_rdf, fNumEntries, fEntries, fValidationSplit,
+                                                      fCols, vecSizes, vecPadding, fShuffle, fSetSeed);
+         fDatasetLoader->SplitDataset(fTrainDatasetTensor, fValidationDatasetTensor);
 
-      fTrainingChunkNum = 0;
-      fValidationChunkNum = 0;
+         fBatchLoader = std::make_unique<RBatchLoader>(fNumEntries, fBatchSize, fNumChunkCols);
+      }
+
+      else {
+         fChunkLoader =
+            std::make_unique<RChunkLoader<Args...>>(f_rdf, fNumEntries, fEntries, fChunkSize, fBlockSize, fValidationSplit,
+                                                 fCols, vecSizes, vecPadding, fShuffle, fSetSeed);
+         fBatchLoader = std::make_unique<RBatchLoader>(fChunkSize, fBatchSize, fNumChunkCols);
+
+         // split the dataset into training and validation sets
+         fChunkLoader->SplitDataset();
+
+         // number of training and validation chunks, calculated in RChunkConstructor
+         fNumTrainingChunks = fChunkLoader->GetNumTrainingChunks();
+         fNumValidationChunks = fChunkLoader->GetNumValidationChunks();
+
+         fTrainingChunkNum = 0;
+         fValidationChunkNum = 0;
+      }
+
    }
 
    ~RBatchGenerator() { DeActivate(); }
@@ -230,74 +255,170 @@ public:
    void CreateTrainBatches()
    {
 
-      fChunkLoader->CreateTrainingChunksIntervals();
-      fTrainingEpochActive = true;
-      fTrainingChunkNum = 0;
-      fChunkLoader->LoadTrainingChunk(fTrainChunkTensor, fTrainingChunkNum);
-      std::size_t lastTrainingBatch = fNumTrainingChunks - fTrainingChunkNum;
-      fBatchLoader->CreateTrainingBatches(fTrainChunkTensor, lastTrainingBatch, fLeftoverTrainingBatchSize,
-                                          fDropRemainder);
-      fTrainingChunkNum++;
-   }
+      if (fLoadEager) {
 
-   /// \brief Creates validation batches by first loading a chunk (see RChunkLoader), and then split it into batches (see RBatchLoader)   
-   void CreateValidationBatches()
-   {
+         std::random_device rd;
+         std::mt19937 g;
 
-      fChunkLoader->CreateValidationChunksIntervals();
-      fValidationEpochActive = true;
-      fValidationChunkNum = 0;
-      fChunkLoader->LoadValidationChunk(fValidationChunkTensor, fValidationChunkNum);
-      std::size_t lastValidationBatch = fNumValidationChunks - fValidationChunkNum;
-      fBatchLoader->CreateValidationBatches(fValidationChunkTensor, lastValidationBatch, fLeftoverValidationBatchSize,
-                                            fDropRemainder);
-      fValidationChunkNum++;
-   }
+         if (fSetSeed == 0) {
+            g.seed(rd());
+         } else {
+            g.seed(fSetSeed);
+         }
 
-   /// \brief Loads a training batch from the queue
-   TMVA::Experimental::RTensor<float> GetTrainBatch()
-   {
-      auto batchQueue = fBatchLoader->GetNumTrainingBatchQueue();
+         // make an identity permutation map
+         std::vector<Long_t> indices(fNumTrainingEntries);
 
-      // load the next chunk if the queue is empty
-      if (batchQueue < 1 && fTrainingChunkNum < fNumTrainingChunks) {
+         for (int i = 0; i < indices.size(); ++i) {
+            indices[i] = i;
+         }
+
+         // shuffle the identity permutation to create a new permutation
+         if (fShuffle) {
+            std::shuffle(indices.begin(), indices.end(), g);
+         }
+
+         TMVA::Experimental::RTensor<float> ShuffledTrainDatasetTensor({fNumTrainingEntries, fNumChunkCols});
+         // shuffle data in RTensor with the permutation map defined above
+         for (std::size_t i = 0; i < fNumTrainingEntries; i++) {
+            std::copy(fTrainDatasetTensor.GetData() + indices[i] * fNumChunkCols,
+                      fTrainDatasetTensor.GetData() + (indices[i] + 1) * fNumChunkCols,
+                      ShuffledTrainDatasetTensor.GetData() + i * fNumChunkCols);
+         }
+
+         fTrainingEpochActive = true;
+         std::size_t lastTrainingBatch = 1;
+         fBatchLoader->CreateTrainingBatches(ShuffledTrainDatasetTensor, 1, fLeftoverTrainingBatchSize,
+                                             fDropRemainder);
+         auto batchQueue = fBatchLoader->GetNumTrainingBatchQueue();
+      }
+
+      else {
+         fChunkLoader->CreateTrainingChunksIntervals();
+         fTrainingEpochActive = true;
+         fTrainingChunkNum = 0;
          fChunkLoader->LoadTrainingChunk(fTrainChunkTensor, fTrainingChunkNum);
          std::size_t lastTrainingBatch = fNumTrainingChunks - fTrainingChunkNum;
          fBatchLoader->CreateTrainingBatches(fTrainChunkTensor, lastTrainingBatch, fLeftoverTrainingBatchSize,
-                                             fDropRemainder);
+                                          fDropRemainder);
          fTrainingChunkNum++;
+
+      }
+   }
+
+   /// \brief Create training batches by first loading a chunk (see RChunkLoader) and split it into batches (see RBatchLoader)
+   void CreateValidationBatches()
+   {
+
+      if (fLoadEager) {
+
+         std::random_device rd;
+         std::mt19937 g;
+
+         if (fSetSeed == 0) {
+            g.seed(rd());
+         } else {
+            g.seed(fSetSeed);
+         }
+
+         // make an identity permutation map
+         std::vector<Long_t> indices(fNumValidationEntries);
+
+         for (int i = 0; i < indices.size(); ++i) {
+            indices[i] = i;
+         }
+
+         // shuffle the identity permutation to create a new permutation
+         if (fShuffle) {
+            std::shuffle(indices.begin(), indices.end(), g);
+         }
+
+         TMVA::Experimental::RTensor<float> ShuffledValidationDatasetTensor({fNumValidationEntries, fNumChunkCols});
+         // shuffle data in RTensor with the permutation map defined above
+         for (std::size_t i = 0; i < fNumValidationEntries; i++) {
+            std::copy(fValidationDatasetTensor.GetData() + indices[i] * fNumChunkCols,
+                      fValidationDatasetTensor.GetData() + (indices[i] + 1) * fNumChunkCols,
+                      ShuffledValidationDatasetTensor.GetData() + i * fNumChunkCols);
+         }
+
+         fValidationEpochActive = true;
+         std::size_t lastValidationBatch = 1;
+         fBatchLoader->CreateValidationBatches(ShuffledValidationDatasetTensor, 1, fLeftoverValidationBatchSize,
+                                             fDropRemainder);
+         auto batchQueue = fBatchLoader->GetNumValidationBatchQueue();
       }
 
       else {
-         ROOT::Internal::RDF::ChangeBeginAndEndEntries(f_rdf, 0, fNumEntries);
-      }
-
-      // Get next batch if available
-      return fBatchLoader->GetTrainBatch();
-   }
-
-   /// \brief Loads a validation batch from the queue   
-   TMVA::Experimental::RTensor<float> GetValidationBatch()
-   {
-      auto batchQueue = fBatchLoader->GetNumValidationBatchQueue();
-
-      // load the next chunk if the queue is empty      
-      if (batchQueue < 1 && fValidationChunkNum < fNumValidationChunks) {
+         fChunkLoader->CreateValidationChunksIntervals();
+         fValidationEpochActive = true;
+         fValidationChunkNum = 0;
          fChunkLoader->LoadValidationChunk(fValidationChunkTensor, fValidationChunkNum);
          std::size_t lastValidationBatch = fNumValidationChunks - fValidationChunkNum;
-         fBatchLoader->CreateValidationBatches(fValidationChunkTensor, lastValidationBatch,
-                                               fLeftoverValidationBatchSize, fDropRemainder);
+         fBatchLoader->CreateValidationBatches(fValidationChunkTensor, lastValidationBatch, fLeftoverValidationBatchSize,
+                                          fDropRemainder);
          fValidationChunkNum++;
+
+      }
+   }
+   
+   /// \brief Loads a training batch from the queue
+   TMVA::Experimental::RTensor<float> GetTrainBatch()
+   {
+      if (fLoadEager) {
+         // Get next batch if available
+         return fBatchLoader->GetTrainBatch();
       }
 
       else {
-         ROOT::Internal::RDF::ChangeBeginAndEndEntries(f_rdf, 0, fNumEntries);
-      }
+         auto batchQueue = fBatchLoader->GetNumTrainingBatchQueue();
 
-      // Get next batch if available
-      return fBatchLoader->GetValidationBatch();
+         // load the next chunk if the queue is empty
+         if (batchQueue < 1 && fTrainingChunkNum < fNumTrainingChunks) {
+            fChunkLoader->LoadTrainingChunk(fTrainChunkTensor, fTrainingChunkNum);
+            std::size_t lastTrainingBatch = fNumTrainingChunks - fTrainingChunkNum;
+            fBatchLoader->CreateTrainingBatches(fTrainChunkTensor, lastTrainingBatch, fLeftoverTrainingBatchSize,
+                                                fDropRemainder);
+            fTrainingChunkNum++;
+         }
+
+         else {
+            ROOT::Internal::RDF::ChangeBeginAndEndEntries(f_rdf, 0, fNumEntries);
+         }
+
+         // Get next batch if available
+         return fBatchLoader->GetTrainBatch();
+      }
    }
 
+   /// \brief Loads a training batch from the queue
+   TMVA::Experimental::RTensor<float> GetValidationBatch()
+   {
+      if (fLoadEager) {
+         // Get next batch if available
+         return fBatchLoader->GetValidationBatch();
+      }
+
+      else {
+         auto batchQueue = fBatchLoader->GetNumValidationBatchQueue();
+
+         // load the next chunk if the queue is empty
+         if (batchQueue < 1 && fValidationChunkNum < fNumValidationChunks) {
+            fChunkLoader->LoadValidationChunk(fValidationChunkTensor, fValidationChunkNum);
+            std::size_t lastValidationBatch = fNumValidationChunks - fValidationChunkNum;
+            fBatchLoader->CreateValidationBatches(fValidationChunkTensor, lastValidationBatch, fLeftoverValidationBatchSize,
+                                                fDropRemainder);
+            fValidationChunkNum++;
+         }
+
+         else {
+            ROOT::Internal::RDF::ChangeBeginAndEndEntries(f_rdf, 0, fNumEntries);
+         }
+
+         // Get next batch if available
+         return fBatchLoader->GetValidationBatch();
+      }
+   }
+   
    std::size_t NumberOfTrainingBatches() { return fNumTrainingBatches; }
    std::size_t NumberOfValidationBatches() { return fNumValidationBatches; }
 
