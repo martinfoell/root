@@ -20,6 +20,8 @@
 #include "TMVA/BatchGenerator/RChunkLoader.hxx"
 #include "TMVA/BatchGenerator/RBatchLoader.hxx"
 #include "TMVA/BatchGenerator/RDatasetLoader.hxx"
+#include "TMVA/BatchGenerator/RSampler.hxx"
+#include "TMVA/BatchGenerator/RTensorOperations.hxx"
 #include "TROOT.h"
 
 #include <cmath>
@@ -29,6 +31,7 @@
 #include <thread>
 #include <variant>
 #include <vector>
+#include <chrono>
 
 namespace TMVA {
 namespace Experimental {
@@ -53,25 +56,46 @@ private:
    std::size_t fBatchSize;
    std::size_t fBlockSize;
    std::size_t fNumColumns;
-   std::size_t fNumChunkCols;
+   std::size_t fNumDatasetCols;
    std::size_t fNumEntries;
    std::size_t fSetSeed;
    std::size_t fSumVecSizes;
 
+   std::size_t fNumDataFrames;
+   std::vector<std::size_t> fDataframeEntries;   
+   std::vector<std::size_t> fDataframeTrainingEntries;   
+   std::vector<std::size_t> fDataframeValidationEntries;
+
+   std::size_t fSumNumEntries; 
+   std::vector<float> fMixtureWeights;
+   std::vector<float> fDataframeBatchFractions;
+   std::vector<std::size_t> fDataframeBatchSizes;
    ROOT::RDF::RResultPtr<std::vector<ULong64_t>> fEntries;
    float fValidationSplit;
 
+   std::string fSampleType;
+   float fSampleStrategy;
    std::unique_ptr<RChunkLoader<Args...>> fChunkLoader;
    std::unique_ptr<RDatasetLoader<Args...>> fDatasetLoader;
    std::unique_ptr<RBatchLoader> fBatchLoader;
-   // std::unique_ptr<RBatchLoader> fBatchLoaderDataset;
+   
+   std::unique_ptr<RBatchLoader> fChunkTrainingBatchLoader;
+   std::unique_ptr<RBatchLoader> fChunkValidationBatchLoader;
+   
+   std::unique_ptr<RBatchLoader> fTrainingBatchLoader;
+   std::unique_ptr<RBatchLoader> fValidationBatchLoader;
 
+   std::unique_ptr<RBatchLoader> fSampleTrainingBatchLoader;
+   std::unique_ptr<RBatchLoader> fSampleValidationBatchLoader;
+   std::unique_ptr<RTensorOperations> fTensorOperations;
+   
+   std::unique_ptr<RSampler> fRSampler;
    std::unique_ptr<std::thread> fLoadingThread;
 
    std::size_t fTrainingChunkNum;
    std::size_t fValidationChunkNum;
 
-   ROOT::RDF::RNode &f_rdf;
+   std::vector<ROOT::RDF::RNode> f_rdfs;
 
    std::mutex fIsActiveMutex;
 
@@ -81,7 +105,10 @@ private:
    bool fNotFiltered;
    bool fUseWholeFile;
    bool fLoadEager;
-   
+   bool fDataframeBalance{false};
+   bool fQueue{true};
+   bool fVector{false};
+  
    bool fEpochActive{false};
    bool fTrainingEpochActive{false};
    bool fValidationEpochActive{false};
@@ -113,25 +140,34 @@ private:
    TMVA::Experimental::RTensor<float> fTrainDatasetTensor;
    TMVA::Experimental::RTensor<float> fValidationDatasetTensor;   
 
-public:
-   RBatchGenerator(ROOT::RDF::RNode &rdf, const std::size_t chunkSize, const std::size_t blockSize,
-                   const std::size_t batchSize, const std::vector<std::string> &cols,
-                   const std::vector<std::size_t> &vecSizes = {}, const float vecPadding = 0.0,
-                   const float validationSplit = 0.0, const std::size_t maxChunks = 0, bool shuffle = true,
-                   bool dropRemainder = true, const std::size_t setSeed = 0, bool loadEager = false)
+   std::vector<TMVA::Experimental::RTensor<float>> fTrainingTensors;
+   std::vector<TMVA::Experimental::RTensor<float>> fValidationTensors;
 
-      : f_rdf(rdf),
+   std::queue<std::unique_ptr<TMVA::Experimental::RTensor<float>>> fTrainingBatchQueue;
+   std::queue<std::unique_ptr<TMVA::Experimental::RTensor<float>>> fValidationBatchQueue;
+   std::vector<std::vector<TMVA::Experimental::RTensor<float>>> fDataFrameBatchVectors;
+  
+public:
+   RBatchGenerator(const std::vector<ROOT::RDF::RNode> &rdfs, const std::vector<float> &mixtureWeights = {}, const std::size_t chunkSize = 0,
+                   const std::size_t blockSize = 0, const std::size_t batchSize = 0, const std::vector<std::string> &cols = {},
+                   const std::vector<std::size_t> &vecSizes = {}, const float vecPadding = 0.0, const float validationSplit = 0.0, const std::size_t maxChunks = 0, bool shuffle = true,
+                   bool dropRemainder = true, const std::size_t setSeed = 0, bool loadEager = false, std::string sampleType = "random", float sampleStrategy = 0.5)
+
+      : f_rdfs(rdfs),
+        fMixtureWeights(mixtureWeights),
         fCols(cols),
         fChunkSize(chunkSize),
         fBlockSize(blockSize),
         fBatchSize(batchSize),
         fValidationSplit(validationSplit),
+        fSampleType(sampleType),
+        fSampleStrategy(sampleStrategy),
         fMaxChunks(maxChunks),
         fDropRemainder(dropRemainder),
         fSetSeed(setSeed),
         fLoadEager(loadEager),
         fShuffle(shuffle),
-        fNotFiltered(f_rdf.GetFilterNames().empty()),
+        fNotFiltered(f_rdfs[0].GetFilterNames().empty()),
         fUseWholeFile(maxChunks == 0),
         fNumColumns(cols.size()),
         fTrainTensor({0, 0}),
@@ -140,68 +176,160 @@ public:
         fValidationChunkTensor({0, 0}),
         fTrainDatasetTensor({0, 0}),
         fValidationDatasetTensor({0, 0})
-   
    {
 
-      // [TODO] create vector of entries if not filtered for speedup
-      fNumEntries = f_rdf.Count().GetValue();
-      fEntries = f_rdf.Take<ULong64_t>("rdfentry_");
-
+      fRSampler = std::make_unique<RSampler>(42, fShuffle, fSetSeed, fLoadEager);
+      fTensorOperations = std::make_unique<RTensorOperations>(fShuffle, fSetSeed);
+      
+      fNumDataFrames = f_rdfs.size();
       fSumVecSizes = std::accumulate(vecSizes.begin(), vecSizes.end(), 0);
-      fNumChunkCols = fNumColumns + fSumVecSizes - vecSizes.size();
-      
-      // add the last element in entries to not go out of range when filling chunks
-      fEntries->push_back((*fEntries)[fNumEntries - 1] + 1);
+      fNumDatasetCols = fNumColumns + fSumVecSizes - vecSizes.size();
 
-      // number of training and validation entries after the split
-      fNumValidationEntries = static_cast<std::size_t>(fValidationSplit * fNumEntries);
-      fNumTrainingEntries = fNumEntries - fNumValidationEntries;
-      
-      fLeftoverTrainingBatchSize = fNumTrainingEntries % fBatchSize;
-      fLeftoverValidationBatchSize = fNumValidationEntries % fBatchSize;
-
-      fNumFullTrainingBatches = fNumTrainingEntries / fBatchSize;
-      fNumFullValidationBatches = fNumValidationEntries / fBatchSize;
-
-      fNumLeftoverTrainingBatches = fLeftoverTrainingBatchSize == 0 ? 0 : 1;
-      fNumLeftoverValidationBatches = fLeftoverValidationBatchSize == 0 ? 0 : 1;
-
-      if (dropRemainder) {
-         fNumTrainingBatches = fNumFullTrainingBatches;
-         fNumValidationBatches = fNumFullValidationBatches;
+      if (fMixtureWeights.size() > 0) {
+         fDataframeBalance = true;
+         std::cout << "Weights provided" << std::endl;
       }
+      if (fNumDataFrames == 1) {
+        fNumEntries = f_rdfs[0].Count().GetValue();
+        fEntries = f_rdfs[0].Take<ULong64_t>("rdfentry_");
 
-      else {
-         fNumTrainingBatches = fNumFullTrainingBatches + fNumLeftoverTrainingBatches;
-         fNumValidationBatches = fNumFullValidationBatches + fNumLeftoverValidationBatches;
-      }
+        // add the last element in entries to not go out of range when filling chunks
+        fEntries->push_back((*fEntries)[fNumEntries - 1] + 1);
+      
+        if (fBatchSize == 0) {
+          fBatchSize = fNumEntries;
+        }
+
+        std::cout << fNumDataFrames << " dataframes" << std::endl; 
+
+        // number of training and validation entries after the split
+        fNumValidationEntries = static_cast<std::size_t>(fValidationSplit * fNumEntries);
+        fNumTrainingEntries = fNumEntries - fNumValidationEntries;
+      
+        fLeftoverTrainingBatchSize = fNumTrainingEntries % fBatchSize;
+        fLeftoverValidationBatchSize = fNumValidationEntries % fBatchSize;
+
+        fNumFullTrainingBatches = fNumTrainingEntries / fBatchSize;
+        fNumFullValidationBatches = fNumValidationEntries / fBatchSize;
+
+        fNumLeftoverTrainingBatches = fLeftoverTrainingBatchSize == 0 ? 0 : 1;
+        fNumLeftoverValidationBatches = fLeftoverValidationBatchSize == 0 ? 0 : 1;
+
+        if (dropRemainder) {
+          fNumTrainingBatches = fNumFullTrainingBatches;
+          fNumValidationBatches = fNumFullValidationBatches;
+        }
+
+        else {
+          fNumTrainingBatches = fNumFullTrainingBatches + fNumLeftoverTrainingBatches;
+          fNumValidationBatches = fNumFullValidationBatches + fNumLeftoverValidationBatches;
+        }
 
       
-      if (loadEager) {
-         fDatasetLoader =
-            std::make_unique<RDatasetLoader<Args...>>(f_rdf, fNumEntries, fEntries, fValidationSplit,
+        if (loadEager) {
+           // for (auto rdf : f_rdfs) {
+           //    std::size_t NumEntries = rdf.Count().GetValue();
+           //    ROOT::RDF::RResultPtr<std::vector<ULong64_t>> Entries = rdf.Take<ULong64_t>("rdfentry_");
+           //    // add the last element in entries to not go out of range when filling chunks
+           //    Entries->push_back((*Entries)[NumEntries - 1] + 1);
+           //    fDataframeEntries.push_back(NumEntries);
+           //    // if (fBatchSize == 0) {
+           //    //    fBatchSize = fNumEntries;
+           //    // }
+              
+           //    fDatasetLoader =
+           //       std::make_unique<RDatasetLoader<Args...>>(rdf, NumEntries, Entries, fValidationSplit,
+           //                                                 fCols, vecSizes, vecPadding, fShuffle, fSetSeed);
+              
+           //    TMVA::Experimental::RTensor<float> TrainDatasetTensor({0, 0});
+           //    TMVA::Experimental::RTensor<float> ValidationDatasetTensor({0, 0});   
+           //    fDatasetLoader->SplitDataset(TrainDatasetTensor, ValidationDatasetTensor);
+              
+           //    fTrainingTensors.push_back(TrainDatasetTensor);
+           //    fValidationTensors.push_back(ValidationDatasetTensor);
+           //    fDataframeTrainingEntries.push_back(TrainDatasetTensor.GetShape()[0]);
+           //    fDataframeValidationEntries.push_back(ValidationDatasetTensor.GetShape()[0]);
+              
+           // }
+           // fBatchLoader = std::make_unique<RBatchLoader>(fBatchSize, fNumDatasetCols);
+           // fTrainingBatchLoader = std::make_unique<RBatchLoader>(fBatchSize, fNumDatasetCols);
+           // fValidationBatchLoader = std::make_unique<RBatchLoader>(fBatchSize, fNumDatasetCols);
+
+
+          fDatasetLoader =
+            std::make_unique<RDatasetLoader<Args...>>(f_rdfs[0], fValidationSplit,
                                                       fCols, vecSizes, vecPadding, fShuffle, fSetSeed);
-         fDatasetLoader->SplitDataset(fTrainDatasetTensor, fValidationDatasetTensor);
 
-         fBatchLoader = std::make_unique<RBatchLoader>(fNumEntries, fBatchSize, fNumChunkCols);
+          
+          TMVA::Experimental::RTensor<float> TrainingDataset({0, 0});
+          TMVA::Experimental::RTensor<float> ValidationDataset({0, 0});
+          fDatasetLoader->SplitDataset(TrainingDataset, ValidationDataset);
+          fTrainDatasetTensor = TrainingDataset;
+          fValidationDatasetTensor = ValidationDataset;
+          
+          fTrainingTensors.push_back(fTrainDatasetTensor);
+          fValidationTensors.push_back(fValidationDatasetTensor);            
+
+          fBatchLoader = std::make_unique<RBatchLoader>(fBatchSize, fNumDatasetCols);
+          fTrainingBatchLoader = std::make_unique<RBatchLoader>(fBatchSize, fNumDatasetCols);
+          fValidationBatchLoader = std::make_unique<RBatchLoader>(fBatchSize, fNumDatasetCols);
+        }
+
+        else {
+          fChunkLoader =
+            std::make_unique<RChunkLoader<Args...>>(f_rdfs[0], fChunkSize, fBlockSize, fValidationSplit,
+                                                    fCols, vecSizes, vecPadding, fShuffle, fSetSeed);
+          fChunkTrainingBatchLoader = std::make_unique<RBatchLoader>(fBatchSize, fNumDatasetCols);
+          fChunkValidationBatchLoader = std::make_unique<RBatchLoader>(fBatchSize, fNumDatasetCols);
+          fBatchLoader = std::make_unique<RBatchLoader>(fBatchSize, fNumDatasetCols);
+
+          // split the dataset into training and validation sets
+          fChunkLoader->SplitDataset();
+
+          // number of training and validation chunks, calculated in RChunkConstructor
+          fNumTrainingChunks = fChunkLoader->GetNumTrainingChunks();
+          fNumValidationChunks = fChunkLoader->GetNumValidationChunks();
+
+          fTrainingChunkNum = 0;
+          fValidationChunkNum = 0;
+        }
+        
+      }
+      
+      
+      
+      else if (fNumDataFrames > 0) {
+      
+        std::cout << "It works here" << std::endl;
+           
+        for (auto rdf : f_rdfs) {
+          fNumEntries = rdf.Count().GetValue();
+          fEntries = rdf.Take<ULong64_t>("rdfentry_");
+          // add the last element in entries to not go out of range when filling chunks
+          fEntries->push_back((*fEntries)[fNumEntries - 1] + 1);
+          fDataframeEntries.push_back(fNumEntries);
+          if (fBatchSize == 0) {
+            fBatchSize = fNumEntries;
+          }
+             
+          fDatasetLoader =
+            std::make_unique<RDatasetLoader<Args...>>(rdf, fValidationSplit,
+                                                      fCols, vecSizes, vecPadding, fShuffle, fSetSeed);
+          TMVA::Experimental::RTensor<float> TrainDatasetTensor({0, 0});
+          TMVA::Experimental::RTensor<float> ValidationDatasetTensor({0, 0});   
+
+          fDatasetLoader->SplitDataset(TrainDatasetTensor, ValidationDatasetTensor);
+          fTrainingTensors.push_back(TrainDatasetTensor);
+          fValidationTensors.push_back(ValidationDatasetTensor);            
+          fBatchLoader = std::make_unique<RBatchLoader>(fBatchSize, fNumDatasetCols);             
+        }
+        std::cout << "RDataFrame entries: "; 
+        for (int i = 0; i < fDataframeEntries.size(); i++) {
+          std::cout << fDataframeEntries[i] << " ";
+        }
+        std::cout << std::endl;
       }
 
-      else {
-         fChunkLoader =
-            std::make_unique<RChunkLoader<Args...>>(f_rdf, fNumEntries, fEntries, fChunkSize, fBlockSize, fValidationSplit,
-                                                 fCols, vecSizes, vecPadding, fShuffle, fSetSeed);
-         fBatchLoader = std::make_unique<RBatchLoader>(fChunkSize, fBatchSize, fNumChunkCols);
-
-         // split the dataset into training and validation sets
-         fChunkLoader->SplitDataset();
-
-         // number of training and validation chunks, calculated in RChunkConstructor
-         fNumTrainingChunks = fChunkLoader->GetNumTrainingChunks();
-         fNumValidationChunks = fChunkLoader->GetNumValidationChunks();
-
-         fTrainingChunkNum = 0;
-         fValidationChunkNum = 0;
-      }
 
    }
 
@@ -254,57 +382,35 @@ public:
    /// \brief Create training batches by first loading a chunk (see RChunkLoader) and split it into batches (see RBatchLoader)
    void CreateTrainBatches()
    {
+     if (fLoadEager) {
+      if (fNumDataFrames == 1) {
 
-      if (fLoadEager) {
-
-         std::random_device rd;
-         std::mt19937 g;
-
-         if (fSetSeed == 0) {
-            g.seed(rd());
-         } else {
-            g.seed(fSetSeed);
-         }
-
-         // make an identity permutation map
-         std::vector<Long_t> indices(fNumTrainingEntries);
-
-         for (int i = 0; i < indices.size(); ++i) {
-            indices[i] = i;
-         }
-
-         // shuffle the identity permutation to create a new permutation
-         if (fShuffle) {
-            std::shuffle(indices.begin(), indices.end(), g);
-         }
-
-         TMVA::Experimental::RTensor<float> ShuffledTrainDatasetTensor({fNumTrainingEntries, fNumChunkCols});
-         // shuffle data in RTensor with the permutation map defined above
-         for (std::size_t i = 0; i < fNumTrainingEntries; i++) {
-            std::copy(fTrainDatasetTensor.GetData() + indices[i] * fNumChunkCols,
-                      fTrainDatasetTensor.GetData() + (indices[i] + 1) * fNumChunkCols,
-                      ShuffledTrainDatasetTensor.GetData() + i * fNumChunkCols);
-         }
-
-         fTrainingEpochActive = true;
-         std::size_t lastTrainingBatch = 1;
-         fBatchLoader->CreateTrainingBatches(ShuffledTrainDatasetTensor, 1, fLeftoverTrainingBatchSize,
-                                             fDropRemainder);
-         auto batchQueue = fBatchLoader->GetNumTrainingBatchQueue();
+        TMVA::Experimental::RTensor<float> ShuffledTrainDatasetTensor({fNumTrainingEntries, fNumDatasetCols});
+        fRSampler->RandomSampler(ShuffledTrainDatasetTensor, fTrainingTensors);
+        // fTensorOperations->ShuffleTensor(ShuffledTrainDatasetTensor, fTrainDatasetTensor);
+        fTrainingEpochActive = true;
+        std::size_t lastTrainingBatch = 1;
+        fTrainingBatchLoader = std::make_unique<RBatchLoader>(fBatchSize, fNumDatasetCols);         
+        fTrainingBatchLoader->CreateBatches(ShuffledTrainDatasetTensor, 1, fLeftoverTrainingBatchSize,
+                                              fDropRemainder, fQueue);
+          // fTrainingBatchLoader->FillBatchesInQueue();
       }
+      
+     }
+     else {
+       fChunkLoader->CreateTrainingChunksIntervals();
+       fTrainingEpochActive = true;
+       fTrainingChunkNum = 0;
+       fChunkLoader->LoadTrainingChunk(fTrainChunkTensor, fTrainingChunkNum);
+       std::size_t lastTrainingBatch = fNumTrainingChunks - fTrainingChunkNum;
+       fChunkTrainingBatchLoader->CreateBatches(fTrainChunkTensor, lastTrainingBatch, fLeftoverTrainingBatchSize,
+                                                fDropRemainder, fQueue);
+       // fChunkTrainingBatchLoader->FillBatchesInQueue();
+       fTrainingChunkNum++;
 
-      else {
-         fChunkLoader->CreateTrainingChunksIntervals();
-         fTrainingEpochActive = true;
-         fTrainingChunkNum = 0;
-         fChunkLoader->LoadTrainingChunk(fTrainChunkTensor, fTrainingChunkNum);
-         std::size_t lastTrainingBatch = fNumTrainingChunks - fTrainingChunkNum;
-         fBatchLoader->CreateTrainingBatches(fTrainChunkTensor, lastTrainingBatch, fLeftoverTrainingBatchSize,
-                                          fDropRemainder);
-         fTrainingChunkNum++;
-
-      }
+     }
    }
+
 
    /// \brief Create training batches by first loading a chunk (see RChunkLoader) and split it into batches (see RBatchLoader)
    void CreateValidationBatches()
@@ -312,40 +418,18 @@ public:
 
       if (fLoadEager) {
 
-         std::random_device rd;
-         std::mt19937 g;
+         TMVA::Experimental::RTensor<float> ShuffledValidationDatasetTensor({fNumValidationEntries, fNumDatasetCols});
 
-         if (fSetSeed == 0) {
-            g.seed(rd());
-         } else {
-            g.seed(fSetSeed);
-         }
-
-         // make an identity permutation map
-         std::vector<Long_t> indices(fNumValidationEntries);
-
-         for (int i = 0; i < indices.size(); ++i) {
-            indices[i] = i;
-         }
-
-         // shuffle the identity permutation to create a new permutation
-         if (fShuffle) {
-            std::shuffle(indices.begin(), indices.end(), g);
-         }
-
-         TMVA::Experimental::RTensor<float> ShuffledValidationDatasetTensor({fNumValidationEntries, fNumChunkCols});
-         // shuffle data in RTensor with the permutation map defined above
-         for (std::size_t i = 0; i < fNumValidationEntries; i++) {
-            std::copy(fValidationDatasetTensor.GetData() + indices[i] * fNumChunkCols,
-                      fValidationDatasetTensor.GetData() + (indices[i] + 1) * fNumChunkCols,
-                      ShuffledValidationDatasetTensor.GetData() + i * fNumChunkCols);
-         }
-
+         fTensorOperations->ShuffleTensor(ShuffledValidationDatasetTensor, fValidationDatasetTensor);         
          fValidationEpochActive = true;
          std::size_t lastValidationBatch = 1;
-         fBatchLoader->CreateValidationBatches(ShuffledValidationDatasetTensor, 1, fLeftoverValidationBatchSize,
-                                             fDropRemainder);
-         auto batchQueue = fBatchLoader->GetNumValidationBatchQueue();
+         fValidationBatchLoader->CreateBatches(ShuffledValidationDatasetTensor, 1, fLeftoverValidationBatchSize,
+                                               fDropRemainder, fQueue);
+         // fValidationBatchLoader->FillBatchesInQueue();
+         auto batchQueue = fValidationBatchLoader->GetNumBatchQueue();
+         std::cout << "val set " << ShuffledValidationDatasetTensor.GetShape()[0] << std::endl; 
+         std::cout << "validation batchs " << batchQueue << std::endl;          
+         std::cout << fLeftoverValidationBatchSize << std::endl; 
       }
 
       else {
@@ -354,8 +438,9 @@ public:
          fValidationChunkNum = 0;
          fChunkLoader->LoadValidationChunk(fValidationChunkTensor, fValidationChunkNum);
          std::size_t lastValidationBatch = fNumValidationChunks - fValidationChunkNum;
-         fBatchLoader->CreateValidationBatches(fValidationChunkTensor, lastValidationBatch, fLeftoverValidationBatchSize,
-                                          fDropRemainder);
+         fChunkValidationBatchLoader->CreateBatches(fValidationChunkTensor, lastValidationBatch, fLeftoverValidationBatchSize,
+                                                    fDropRemainder, fQueue);
+         // fChunkValidationBatchLoader->FillBatchesInQueue();         
          fValidationChunkNum++;
 
       }
@@ -366,27 +451,36 @@ public:
    {
       if (fLoadEager) {
          // Get next batch if available
-         return fBatchLoader->GetTrainBatch();
+         if (fNumDataFrames == 1) {
+            return fTrainingBatchLoader->GetBatch();            
+         }
+
+         else {
+            return fSampleTrainingBatchLoader->GetBatch();            
+            std::cout << "Is here" << std::endl;
+         }
+
       }
 
       else {
-         auto batchQueue = fBatchLoader->GetNumTrainingBatchQueue();
+         auto batchQueue = fChunkTrainingBatchLoader->GetNumBatchQueue();
 
          // load the next chunk if the queue is empty
          if (batchQueue < 1 && fTrainingChunkNum < fNumTrainingChunks) {
             fChunkLoader->LoadTrainingChunk(fTrainChunkTensor, fTrainingChunkNum);
             std::size_t lastTrainingBatch = fNumTrainingChunks - fTrainingChunkNum;
-            fBatchLoader->CreateTrainingBatches(fTrainChunkTensor, lastTrainingBatch, fLeftoverTrainingBatchSize,
-                                                fDropRemainder);
+            fChunkTrainingBatchLoader->CreateBatches(fTrainChunkTensor, lastTrainingBatch, fLeftoverTrainingBatchSize,
+                                                     fDropRemainder, fQueue);
+            // fChunkTrainingBatchLoader->FillBatchesInQueue();
             fTrainingChunkNum++;
          }
 
          else {
-            ROOT::Internal::RDF::ChangeBeginAndEndEntries(f_rdf, 0, fNumEntries);
+            ROOT::Internal::RDF::ChangeBeginAndEndEntries(f_rdfs[0], 0, fNumEntries);
          }
 
          // Get next batch if available
-         return fBatchLoader->GetTrainBatch();
+         return fChunkTrainingBatchLoader->GetBatch();
       }
    }
 
@@ -395,29 +489,73 @@ public:
    {
       if (fLoadEager) {
          // Get next batch if available
-         return fBatchLoader->GetValidationBatch();
+         return fValidationBatchLoader->GetBatch();
       }
 
       else {
-         auto batchQueue = fBatchLoader->GetNumValidationBatchQueue();
+         auto batchQueue = fChunkValidationBatchLoader->GetNumBatchQueue();
 
          // load the next chunk if the queue is empty
          if (batchQueue < 1 && fValidationChunkNum < fNumValidationChunks) {
             fChunkLoader->LoadValidationChunk(fValidationChunkTensor, fValidationChunkNum);
             std::size_t lastValidationBatch = fNumValidationChunks - fValidationChunkNum;
-            fBatchLoader->CreateValidationBatches(fValidationChunkTensor, lastValidationBatch, fLeftoverValidationBatchSize,
-                                                fDropRemainder);
+            fChunkValidationBatchLoader->CreateBatches(fValidationChunkTensor, lastValidationBatch, fLeftoverValidationBatchSize,
+                                                       fDropRemainder, fQueue);
+            // fChunkValidationBatchLoader->FillBatchesInQueue();            
             fValidationChunkNum++;
          }
 
          else {
-            ROOT::Internal::RDF::ChangeBeginAndEndEntries(f_rdf, 0, fNumEntries);
+            ROOT::Internal::RDF::ChangeBeginAndEndEntries(f_rdfs[0], 0, fNumEntries);
          }
 
          // Get next batch if available
-         return fBatchLoader->GetValidationBatch();
+         return fChunkValidationBatchLoader->GetBatch();
       }
    }
+   
+  void distributeBatch() {
+
+    fSumNumEntries = std::accumulate(fDataframeEntries.begin(), fDataframeEntries.end(), 0);
+    std::cout << fSumNumEntries << std::endl;
+
+    if (fDataframeBalance) {
+       fDataframeBatchFractions = fMixtureWeights;
+    }
+    
+    else {
+       for (float i : fDataframeEntries) {
+          fDataframeBatchFractions.push_back(i / fSumNumEntries);
+       }
+    }
+
+    for (float i : fDataframeBatchFractions) {
+      std::size_t batchSize = static_cast<std::size_t>(i * fBatchSize);
+      fDataframeBatchSizes.push_back(batchSize);
+    }
+    
+    fDataframeBatchSizes.resize(fDataframeBatchFractions.size());
+    std::vector<std::pair<float, std::size_t>> remainders; // {fractional part, index}
+
+    // Step 1: multiply by batch size and take floor
+    std::size_t current_sum = 0;
+    for (std::size_t i = 0; i < fDataframeBatchFractions.size(); i++) {
+      float val = fDataframeBatchFractions[i] * fBatchSize;
+      fDataframeBatchSizes[i] = static_cast<std::size_t>(std::floor(val));
+      remainders.push_back({val - fDataframeBatchSizes[i], i});
+      current_sum += fDataframeBatchSizes[i];
+    }
+
+    // Step 2: calculate how much we are short
+    std::size_t leftover = fBatchSize - current_sum;
+
+    // Step 3: distribute leftover 1s to largest remainders
+    std::sort(remainders.rbegin(), remainders.rend()); // descending
+    for (std::size_t i = 0; i < leftover; i++) {
+      fDataframeBatchSizes[remainders[i].second]++;
+    }
+  }
+  
    
    std::size_t NumberOfTrainingBatches() { return fNumTrainingBatches; }
    std::size_t NumberOfValidationBatches() { return fNumValidationBatches; }

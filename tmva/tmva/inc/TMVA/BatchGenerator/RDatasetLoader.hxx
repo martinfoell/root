@@ -17,6 +17,7 @@
 #include "TMVA/RTensor.hxx"
 #include "ROOT/RDataFrame.hxx"
 #include "TMVA/BatchGenerator/RChunkConstructor.hxx"
+#include "TMVA/BatchGenerator/RTensorOperations.hxx"
 #include "ROOT/RDF/Utils.hxx"
 #include "ROOT/RVec.hxx"
 
@@ -42,7 +43,7 @@ class RDatasetLoaderFunctor {
    std::vector<std::size_t> fMaxVecSizes{};
    TMVA::Experimental::RTensor<float> &fChunkTensor;
 
-   std::size_t fNumChunkCols;
+   std::size_t fNumDatasetCols;
 
    int fI;
    int fNumColumns;
@@ -104,18 +105,17 @@ class RDatasetLoader {
 private:
    // clang-format on   
    std::size_t fNumEntries;
-   std::size_t fChunkSize;
-   std::size_t fBlockSize;
    float fValidationSplit;
 
    std::vector<std::size_t> fVecSizes;
    std::size_t fSumVecSizes;
    std::size_t fVecPadding;
-   std::size_t fNumChunkCols;
+   std::size_t fNumDatasetCols;
 
-   std::size_t fNumTrainEntries;
+   std::size_t fNumTrainingEntries;
    std::size_t fNumValidationEntries;
-
+   std::unique_ptr<RTensorOperations> fTensorOperations;
+  
    ROOT::RDF::RNode &f_rdf;
    std::vector<std::string> fCols;
    std::size_t fNumCols;
@@ -130,13 +130,10 @@ private:
    std::unique_ptr<RChunkConstructor> fValidation;
 
 public:
-   RDatasetLoader(ROOT::RDF::RNode &rdf, std::size_t numEntries,
-                ROOT::RDF::RResultPtr<std::vector<ULong64_t>> rdf_entries, const float validationSplit,
-                const std::vector<std::string> &cols, const std::vector<std::size_t> &vecSizes = {},
-                const float vecPadding = 0.0, bool shuffle = true, const std::size_t setSeed = 0)
+   RDatasetLoader(ROOT::RDF::RNode &rdf, const float validationSplit,
+                  const std::vector<std::string> &cols, const std::vector<std::size_t> &vecSizes = {},
+                  const float vecPadding = 0.0, bool shuffle = true, const std::size_t setSeed = 0)
       : f_rdf(rdf),
-        fNumEntries(numEntries),
-        fEntries(rdf_entries),
         fCols(cols),
         fVecSizes(vecSizes),
         fVecPadding(vecPadding),
@@ -145,14 +142,23 @@ public:
         fShuffle(shuffle),
         fSetSeed(setSeed)
    {
+      
+      fTensorOperations = std::make_unique<RTensorOperations>(fShuffle, fSetSeed);
       fNumCols = fCols.size();
       fSumVecSizes = std::accumulate(fVecSizes.begin(), fVecSizes.end(), 0);
 
-      fNumChunkCols = fNumCols + fSumVecSizes - fVecSizes.size();
+      fNumDatasetCols = fNumCols + fSumVecSizes - fVecSizes.size();
+
+      fNumEntries = f_rdf.Count().GetValue();
+      fEntries = f_rdf.Take<ULong64_t>("rdfentry_");
+
+      // add the last element in entries to not go out of range when filling chunks
+      fEntries->push_back((*fEntries)[fNumEntries - 1] + 1);
+      
 
       // number of training and validation entries after the split
       fNumValidationEntries = static_cast<std::size_t>(fValidationSplit * fNumEntries);
-      fNumTrainEntries = fNumEntries - fNumValidationEntries;
+      fNumTrainingEntries = fNumEntries - fNumValidationEntries;
 
    }
 
@@ -160,61 +166,35 @@ public:
    /// \brief Load the nth chunk from the training dataset into a tensor
    /// \param[in] TrainChunkTensor RTensor for the training chunk
    /// \param[in] chunk Index of the chunk in the dataset
-   void SplitDataset(TMVA::Experimental::RTensor<float> &TrainDatasetTensor, TMVA::Experimental::RTensor<float> &ValidationDatasetTensor)
+   void SplitDataset(TMVA::Experimental::RTensor<float> &TrainingDataset, TMVA::Experimental::RTensor<float> &ValidationDataset)
    {
-
-      std::random_device rd;
-      std::mt19937 g;
-
-      if (fSetSeed == 0) {
-         g.seed(rd());
-      } else {
-         g.seed(fSetSeed);
-      }
-
-      // make an identity permutation map        
-      std::vector<int> indices(fNumEntries);
-      std::iota(indices.begin(), indices.end(), 0);
-
-      // shuffle the identity permutation to create a new permutation         
-      if (fShuffle) {
-         std::shuffle(indices.begin(), indices.end(), g);
-      }
-      
-      TMVA::Experimental::RTensor<float> Tensor({fNumEntries, fNumChunkCols});
+      TrainingDataset.Resize({fNumTrainingEntries, fNumDatasetCols});
+      ValidationDataset.Resize({fNumValidationEntries, fNumDatasetCols});
+      TMVA::Experimental::RTensor<float> Dataset({fNumEntries, fNumDatasetCols});
 
       if (fNotFiltered) {
-         RDatasetLoaderFunctor<Args...> func(Tensor, fNumChunkCols, fVecSizes, fVecPadding, 0);
+         RDatasetLoaderFunctor<Args...> func(Dataset, fNumDatasetCols, fVecSizes, fVecPadding, 0);
          f_rdf.Foreach(func, fCols);
       }
 
       else {
          std::size_t datasetEntry = 0;
          for (std::size_t j = 0; j < fNumEntries; j++) {
-            RDatasetLoaderFunctor<Args...> func(Tensor, fNumChunkCols, fVecSizes, fVecPadding, datasetEntry);
+            RDatasetLoaderFunctor<Args...> func(Dataset, fNumDatasetCols, fVecSizes, fVecPadding, datasetEntry);
             ROOT::Internal::RDF::ChangeBeginAndEndEntries(f_rdf, (*fEntries)[j], (*fEntries)[j + 1]);
             f_rdf.Foreach(func, fCols);
             datasetEntry++;
          }
       }
 
-      TMVA::Experimental::RTensor<float> ShuffledTensor({fNumEntries, fNumChunkCols});            
+      TMVA::Experimental::RTensor<float> ShuffledDataset({fNumEntries, fNumDatasetCols});
+      fTensorOperations->ShuffleTensor(ShuffledDataset, Dataset);
       
-      // shuffle data in RTensor with the permutation map defined above
-      for (std::size_t i = 0; i < fNumEntries; i++) {
-         std::copy(Tensor.GetData() + indices[i] * fNumChunkCols,
-                   Tensor.GetData() + (indices[i] + 1) * fNumChunkCols,
-                   ShuffledTensor.GetData() + i * fNumChunkCols);
-      }
-
-      TrainDatasetTensor = ShuffledTensor.Slice({{0, fNumTrainEntries}, {0, fNumChunkCols}});
-      ValidationDatasetTensor = ShuffledTensor.Slice({{fNumTrainEntries, fNumEntries}, {0, fNumChunkCols}});
+      TrainingDataset = ShuffledDataset.Slice({{0, fNumTrainingEntries}, {0, fNumDatasetCols}});
+      ValidationDataset = ShuffledDataset.Slice({{fNumTrainingEntries, fNumEntries}, {0, fNumDatasetCols}});
       
    }
-   
-   std::size_t GetNumTrainingChunks() { return fTraining->Chunks; }
 
-   std::size_t GetNumValidationChunks() { return fValidation->Chunks; }
 };
 
 } // namespace Internal

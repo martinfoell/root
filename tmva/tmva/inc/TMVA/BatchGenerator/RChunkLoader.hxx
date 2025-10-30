@@ -117,7 +117,7 @@ private:
    std::size_t fVecPadding;
    std::size_t fNumChunkCols;
 
-   std::size_t fNumTrainEntries;
+   std::size_t fNumTrainingEntries;
    std::size_t fNumValidationEntries;
 
    ROOT::RDF::RNode &f_rdf;
@@ -134,14 +134,11 @@ private:
    std::unique_ptr<RChunkConstructor> fValidation;
 
 public:
-   RChunkLoader(ROOT::RDF::RNode &rdf, std::size_t numEntries,
-                ROOT::RDF::RResultPtr<std::vector<ULong64_t>> rdf_entries, const std::size_t chunkSize,
+   RChunkLoader(ROOT::RDF::RNode &rdf, const std::size_t chunkSize,
                 const std::size_t blockSize, const float validationSplit, const std::vector<std::string> &cols,
                 const std::vector<std::size_t> &vecSizes = {}, const float vecPadding = 0.0, bool shuffle = true,
                 const std::size_t setSeed = 0)
       : f_rdf(rdf),
-        fNumEntries(numEntries),
-        fEntries(rdf_entries),
         fCols(cols),
         fVecSizes(vecSizes),
         fVecPadding(vecPadding),
@@ -156,12 +153,18 @@ public:
       fSumVecSizes = std::accumulate(fVecSizes.begin(), fVecSizes.end(), 0);
 
       fNumChunkCols = fNumCols + fSumVecSizes - fVecSizes.size();
+      fNumEntries = f_rdf.Count().GetValue();
+      fEntries = f_rdf.Take<ULong64_t>("rdfentry_");
+
+      // add the last element in entries to not go out of range when filling chunks
+      fEntries->push_back((*fEntries)[fNumEntries - 1] + 1);
+
 
       // number of training and validation entries after the split
       fNumValidationEntries = static_cast<std::size_t>(fValidationSplit * fNumEntries);
-      fNumTrainEntries = fNumEntries - fNumValidationEntries;
+      fNumTrainingEntries = fNumEntries - fNumValidationEntries;
 
-      fTraining = std::make_unique<RChunkConstructor>(fNumTrainEntries, fChunkSize, fBlockSize);
+      fTraining = std::make_unique<RChunkConstructor>(fNumTrainingEntries, fChunkSize, fBlockSize);
       fValidation = std::make_unique<RChunkConstructor>(fNumValidationEntries, fChunkSize, fBlockSize);
    }
 
@@ -464,7 +467,7 @@ public:
    std::vector<std::size_t> GetTrainingChunkSizes() { return fTraining->ChunksSizes; }
    std::vector<std::size_t> GetValidationChunkSizes() { return fValidation->ChunksSizes; }
 
-   std::size_t GetNumTrainingEntries() { return fNumTrainEntries; }
+   std::size_t GetNumTrainingEntries() { return fNumTrainingEntries; }
    std::size_t GetNumValidationEntries() { return fNumValidationEntries; }
 
    void CheckIfUnique(TMVA::Experimental::RTensor<float> &Tensor)

@@ -48,7 +48,7 @@ class BaseGenerator:
 
         if not columns:
             columns = x_rdf.GetColumnNames()
-
+            print(columns)
         template_string = ""
 
         self.given_columns = []
@@ -82,10 +82,11 @@ class BaseGenerator:
 
     def __init__(
         self,
-        rdataframe: ROOT.RDF.RNode,
-        batch_size: int,
-        chunk_size: int,
-        block_size: int,            
+        rdataframes: ROOT.RDF.RNode | list[ROOT.RDF.RNode] = list(),            
+        mixture_weights: list[float] = list(),
+        batch_size: int = 0,
+        chunk_size: int = 0,
+        block_size: int = 0,            
         columns: list[str] = list(),
         max_vec_sizes: dict[str, int] = dict(),
         vec_padding: int = 0,
@@ -97,6 +98,8 @@ class BaseGenerator:
         drop_remainder: bool = True,
         set_seed: int = 0,
         load_eager: bool = False,
+        sampling_type: str = "random",
+        sampling_strategy: float = 0.5,
     ):
         """Wrapper around the Cpp RBatchGenerator
 
@@ -149,7 +152,7 @@ class BaseGenerator:
                     using RBatchGenerator"
             )
 
-        if chunk_size < batch_size:
+        if chunk_size < batch_size and load_eager == False:
             raise ValueError(
                 f"chunk_size cannot be smaller than batch_size: chunk_size: \
                     {chunk_size}, batch_size: {batch_size}"
@@ -161,16 +164,27 @@ class BaseGenerator:
                     given value is {validation_split}"
             )
 
-        self.noded_rdf = RDF.AsRNode(rdataframe)
+        if  load_eager == True and (chunk_size != 0 or block_size != 0):
+            raise ValueError(
+                f"This is a new error"
+            )
 
+        if not isinstance(rdataframes, list):
+            print("rdf not a list")
+            rdataframes = [rdataframes]
+        self.noded_rdfs = [RDF.AsRNode(rdf) for rdf in rdataframes]
+        
         if isinstance(target, str):
             target = [target]
 
+        if not isinstance(target, list):
+            print("target is not a list")
+            
         self.target_columns = target
         self.weights_column = weights
 
         template, max_vec_sizes_list = self.get_template(
-            rdataframe, columns, max_vec_sizes
+            rdataframes[0], columns, max_vec_sizes
         )
 
         self.num_columns = len(self.all_columns)
@@ -223,7 +237,8 @@ class BaseGenerator:
         EnableThreadSafety()
 
         self.generator = TMVA.Experimental.Internal.RBatchGenerator(template)(
-            self.noded_rdf,
+            self.noded_rdfs,
+            mixture_weights,
             chunk_size,
             block_size,            
             batch_size,
@@ -236,6 +251,8 @@ class BaseGenerator:
             drop_remainder,
             set_seed,
             load_eager,
+            sampling_type,
+            sampling_strategy,
         )
 
         atexit.register(self.DeActivate)
@@ -630,7 +647,6 @@ class ValidationRBatchGenerator:
 
     def __next__(self):
         batch = self._callable.__next__()
-
         if batch is None:
             raise StopIteration
 
@@ -654,10 +670,11 @@ class ValidationRBatchGenerator:
         return None    
     
 def CreateNumPyGenerators(
-    rdataframe: ROOT.RDF.RNode,
-    batch_size: int,
-    chunk_size: int,
-    block_size: int,        
+    rdataframes: ROOT.RDF.RNode | list[ROOT.RDF.RNode] = list(),
+    mixture_weights: list[float] = list(),
+    batch_size: int = 0,
+    chunk_size: int = 0,
+    block_size: int = 0,        
     columns: list[str] = list(),
     max_vec_sizes: dict[str, int] = dict(),
     vec_padding: int = 0,
@@ -669,6 +686,8 @@ def CreateNumPyGenerators(
     drop_remainder=True,
     set_seed: int = 0,
     load_eager: bool = False,
+    sampling_type: str = "random",
+    sampling_strategy: float = 0.5,
 ) -> Tuple[TrainRBatchGenerator, ValidationRBatchGenerator]:
     """
     Return two batch generators based on the given ROOT file and tree or RDataFrame
@@ -724,7 +743,8 @@ def CreateNumPyGenerators(
     import numpy as np
 
     base_generator = BaseGenerator(
-        rdataframe,
+        rdataframes,
+        mixture_weights,
         batch_size,
         chunk_size,
         block_size,        
@@ -739,6 +759,8 @@ def CreateNumPyGenerators(
         drop_remainder,
         set_seed,
         load_eager,
+        sampling_type,
+        sampling_strategy,
     )
 
     train_generator = TrainRBatchGenerator(
@@ -756,10 +778,11 @@ def CreateNumPyGenerators(
 
 
 def CreateTFDatasets(
-    rdataframe: ROOT.RDF.RNode,
-    batch_size: int,
-    chunk_size: int,
-    block_size: int,        
+    rdataframes: ROOT.RDF.RNode | list[ROOT.RDF.RNode] = list(),
+    mixture_weights: list[float] = list(),
+    batch_size: int = 0,
+    chunk_size: int = 0,
+    block_size: int = 0,        
     columns: list[str] = list(),
     max_vec_sizes: dict[str, int] = dict(),
     vec_padding: int = 0,
@@ -771,6 +794,8 @@ def CreateTFDatasets(
     drop_remainder=True,
     set_seed: int = 0,
     load_eager: bool = False,
+    sampling_type: str = "random",
+    sampling_strategy: float = 0.5,
 ) -> Tuple[tf.data.Dataset, tf.data.Dataset]:
     """
     Return two Tensorflow Datasets based on the given ROOT file and tree or RDataFrame
@@ -825,7 +850,8 @@ def CreateTFDatasets(
     import tensorflow as tf
 
     base_generator = BaseGenerator(
-        rdataframe,
+        rdataframes,
+        mixture_weights,
         batch_size,
         chunk_size,
         block_size,
@@ -840,6 +866,8 @@ def CreateTFDatasets(
         drop_remainder,
         set_seed,
         load_eager,
+        sampling_type,
+        sampling_strategy,
     )
 
     train_generator = TrainRBatchGenerator(
@@ -907,10 +935,11 @@ def CreateTFDatasets(
 
 
 def CreatePyTorchGenerators(
-    rdataframe: ROOT.RDF.RNode,
-    batch_size: int,
-    chunk_size: int,
-    block_size: int,        
+    rdataframes: ROOT.RDF.RNode | list[ROOT.RDF.RNode] = list(),
+    mixture_weights: list[float] = list(),    
+    batch_size: int = 0,
+    chunk_size: int = 0,
+    block_size: int = 0,        
     columns: list[str] = list(),
     max_vec_sizes: dict[str, int] = dict(),
     vec_padding: int = 0,
@@ -922,6 +951,8 @@ def CreatePyTorchGenerators(
     drop_remainder=True,
     set_seed: int = 0,
     load_eager: bool = False,
+    sampling_type: str = "random",
+    sampling_strategy: float = 0.5,
 ) -> Tuple[TrainRBatchGenerator, ValidationRBatchGenerator]:
     """
     Return two Tensorflow Datasets based on the given ROOT file and tree or RDataFrame
@@ -974,7 +1005,8 @@ def CreatePyTorchGenerators(
             validation generator will return no batches.
     """
     base_generator = BaseGenerator(
-        rdataframe,
+        rdataframes,
+        mixture_weights,
         batch_size,
         chunk_size,
         block_size,
@@ -989,6 +1021,8 @@ def CreatePyTorchGenerators(
         drop_remainder,
         set_seed,
         load_eager,
+        sampling_type,
+        sampling_strategy,
     )
 
     train_generator = TrainRBatchGenerator(
