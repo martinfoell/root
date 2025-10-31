@@ -72,23 +72,25 @@ private:
 
    std::vector<TMVA::Experimental::RTensor<float>> fBatchesVector;
 public:
-  RBatchLoader(std::size_t batchSize, std::size_t numColumns)
+   RBatchLoader(std::size_t batchSize, std::size_t numColumns, std::size_t numEntries, bool dropRemainder)
     : fBatchSize(batchSize),
-      fNumColumns(numColumns)
+      fNumColumns(numColumns),
+      fNumEntries(numEntries),
+      fDropRemainder(dropRemainder)
    {
 
-     // fLeftoverBatchSize = fNumEntries % fBatchSize;
-     // fNumFullBatches = fNumEntries / fBatchSize;
+     fLeftoverBatchSize = fNumEntries % fBatchSize;
+     fNumFullBatches = fNumEntries / fBatchSize;
 
-     // fNumLeftoverBatches = fLeftoverBatchSize == 0 ? 0 : 1;
+     fNumLeftoverBatches = fLeftoverBatchSize == 0 ? 0 : 1;
 
-     // if (fDropRemainder) {
-     //   fNumBatches = fNumFullBatches;
-     // }
+     if (fDropRemainder) {
+       fNumBatches = fNumFullBatches;
+     }
      
-     // else {
-     //   fNumBatches = fNumFullBatches + fNumLeftoverBatches;
-     // }
+     else {
+       fNumBatches = fNumFullBatches + fNumLeftoverBatches;
+     }
      
 
      fPrimaryLeftoverBatch =
@@ -157,8 +159,7 @@ public:
    /// \param[in] lastbatch Check if the batch in the chunk is the last one
    /// \param[in] leftoverBatchSize Size of the leftover batch in the validation dataset
    /// \param[in] dromRemainder Bool to drop the remainder batch or not
-   void CreateBatches(TMVA::Experimental::RTensor<float> &chunkTensor, std::size_t lastbatch,
-                      std::size_t leftoverBatchSize, bool dropRemainder, bool Queue)
+   void CreateBatches(TMVA::Experimental::RTensor<float> &chunkTensor, std::size_t lastbatch, bool Queue)
    {
       std::size_t ChunkSize = chunkTensor.GetShape()[0];
       std::size_t NumCols = chunkTensor.GetShape()[1];
@@ -219,11 +220,11 @@ public:
 
       if (lastbatch == 1) {
 
-         if (dropRemainder == false && leftoverBatchSize > 0) {
+         if (fDropRemainder == false && fLeftoverBatchSize > 0) {
             auto copy = std::make_unique<TMVA::Experimental::RTensor<float>>(
-               std::vector<std::size_t>{leftoverBatchSize, fNumColumns});
+               std::vector<std::size_t>{fLeftoverBatchSize, fNumColumns});
             std::copy((*fPrimaryLeftoverBatch).GetData(),
-                      (*fPrimaryLeftoverBatch).GetData() + (leftoverBatchSize * fNumColumns),
+                      (*fPrimaryLeftoverBatch).GetData() + (fLeftoverBatchSize * fNumColumns),
                       copy->GetData());
             batches.emplace_back(std::move(copy));
          }
@@ -251,7 +252,11 @@ public:
   //     fBatchQueue.push(std::move(batches[i]));
   //   }
   // }
+
   std::size_t GetNumBatchQueue() { return fBatchQueue.size(); }
+  std::size_t GetNumRemainderRows() { return fLeftoverBatchSize; }
+  std::size_t GetNumBatches() { return fNumBatches; }
+  std::size_t GetNumEntries() { return fNumEntries; }   
   
   std::vector<TMVA::Experimental::RTensor<float>> GetBatchesVector() {
     return fBatchesVector;
