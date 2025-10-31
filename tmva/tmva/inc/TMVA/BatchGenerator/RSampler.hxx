@@ -36,12 +36,22 @@ namespace Internal {
 class RSampler {
 private:
    // clang-format on   
-   std::mt19937 fGen;
+  std::mt19937 fGen;
    bool fShuffle;
    std::size_t fSetSeed;
    float fSamplingStrategy;
+   std::size_t fRandomState;
    bool fReplacement;
    bool fLoadEager;
+
+   std::size_t fMajor;
+   std::size_t fMinor;
+   std::size_t fNumMajor;
+   std::size_t fNumMinor;
+   std::size_t fNumRMajor;
+   std::size_t fNumRandomUnderSampler;
+   std::size_t fNumUnderSampler;
+  
    std::vector<std::size_t> fSamples;
    std::vector<std::size_t> fSamplesCycled;
    std::vector<std::pair<std::size_t, std::size_t>> fSampleIntervals;
@@ -49,6 +59,7 @@ private:
 public:
    RSampler(float samplingStrategy, std::size_t randomState = 42, bool replacement = false, bool shuffle = true, const std::size_t setSeed = 0, bool loadEager = false)
       : fSamplingStrategy(samplingStrategy),
+        fRandomState(randomState),
         fGen(randomState),
         fReplacement(replacement),
         fShuffle(shuffle),
@@ -63,8 +74,15 @@ public:
     fSamples.clear();
     fSamples.reserve(n_samples);
     for (std::size_t i = 0; i < n_samples; ++i) {
-       std::size_t val = dist(fGen);
-       fSamples.push_back(val);
+      std::size_t sample;
+      if (fRandomState == 0) {
+        sample = i;
+      }
+      
+      else {
+        sample = dist(fGen);        
+      }
+      fSamples.push_back(sample);
     }
    }
 
@@ -76,7 +94,10 @@ public:
 
       for (std::size_t i = 0; i < max; ++i)
          UniqueSamples.push_back(i);
-      std::shuffle(UniqueSamples.begin(), UniqueSamples.end(), fGen);
+      
+      if (fRandomState != 0) {
+        std::shuffle(UniqueSamples.begin(), UniqueSamples.end(), fGen);
+      }
       
       for (std::size_t i = 0; i < n_samples; ++i) {
          fSamples.push_back(UniqueSamples[i]);
@@ -98,46 +119,59 @@ public:
          fTensorOperations->ShuffleTensor(SampledTensor, Tensor);
    }
 
-   void RandomUnderSampler(TMVA::Experimental::RTensor<float> &ShuffledSampledTensor, std::vector<TMVA::Experimental::RTensor<float>> &Tensors) {
-      std::size_t major;
-      std::size_t minor;
+  std::size_t SetupRandomUnderSampler(std::vector<TMVA::Experimental::RTensor<float>> &Tensors) {
+      // std::size_t major;
+      // std::size_t minor;
 
       if (Tensors[0].GetShape()[0] > Tensors[1].GetShape()[0]) {
-         major = 0;
-         minor = 1;
+         fMajor = 0;
+         fMinor = 1;
       }
       else {
-         major = 1;
-         minor = 0;         
+         fMajor = 1;
+         fMinor = 0;         
       }
 
-      std::size_t n_major = Tensors[major].GetShape()[0];
-      std::size_t n_minor = Tensors[minor].GetShape()[0];
+      fNumMajor = Tensors[fMajor].GetShape()[0];
+      fNumMinor = Tensors[fMinor].GetShape()[0];
+      fNumRMajor = static_cast<std::size_t>(fNumMinor / fSamplingStrategy);
+      fNumUnderSampler = fNumMinor + fNumRMajor;
 
-      std::size_t n_rMajor = static_cast<std::size_t>(n_minor / fSamplingStrategy);
+      return fNumUnderSampler;
+  }
+  
+   void RandomUnderSampler(TMVA::Experimental::RTensor<float> &ShuffledSampledTensor, std::vector<TMVA::Experimental::RTensor<float>> &Tensors) {
+      
+      std::cout << "Major " << fNumMajor << " Minor " << fNumMinor << " rMajor "<< fNumRMajor << std::endl; 
 
       if (fReplacement) {
-         SampleWithReplacement(n_rMajor, n_major);         
+         SampleWithReplacement(fNumRMajor, fNumMajor);         
+         std::cout << "With replacement" << std::endl;       
       }
       
       else {
-         SampleWithoutReplacement(n_rMajor, n_major);                  
+         SampleWithoutReplacement(fNumRMajor, fNumMajor);
+         std::cout << "Without replacement" << std::endl; 
       }
-
-      std::size_t cols = Tensors[0].GetShape()[1];
-      ShuffledSampledTensor.Resize({n_minor + n_rMajor, cols});
+      std::cout << "fSamples size " << fSamples.size() << std::endl; 
+      for (auto sample : fSamples) {
+        std::cout << sample << " "; 
+      }
+      std::cout << std::endl; 
       
-      TMVA::Experimental::RTensor<float> SampledTensor({n_minor + n_rMajor, cols});
-      TMVA::Experimental::RTensor<float> UnderSampledTensor({n_rMajor, cols});
+      std::size_t cols = Tensors[0].GetShape()[1];
+      ShuffledSampledTensor = TMVA::Experimental::RTensor<float>({fNumUnderSampler, cols});
+      TMVA::Experimental::RTensor<float> SampledTensor({fNumUnderSampler, cols});
+      TMVA::Experimental::RTensor<float> UnderSampledTensor({fNumRMajor, cols});
       
       std::size_t index = 0;
-      for (std::size_t i = 0; i < n_rMajor; i++) {
-         std::copy(Tensors[major].GetData() + fSamples[i] * cols, Tensors[major].GetData() + (fSamples[i]+1) * cols,
+      for (std::size_t i = 0; i < fNumRMajor; i++) {
+         std::copy(Tensors[fMajor].GetData() + fSamples[i] * cols, Tensors[fMajor].GetData() + (fSamples[i]+1) * cols,
                    UnderSampledTensor.GetData() + index * cols);
          index++;
       }
 
-      fTensorOperations->ConcatinateTwoTensors(SampledTensor, UnderSampledTensor, Tensors[minor]);
+      fTensorOperations->ConcatinateTwoTensors(SampledTensor, UnderSampledTensor, Tensors[fMinor]);
       fTensorOperations->ShuffleTensor(ShuffledSampledTensor, SampledTensor);
    }
 

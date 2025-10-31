@@ -88,6 +88,8 @@ private:
    std::unique_ptr<RTensorOperations> fTensorOperations;
    
    std::unique_ptr<RSampler> fSampler;
+   std::unique_ptr<RSampler> fTrainingSampler;
+   std::unique_ptr<RSampler> fValidationSampler;
    std::unique_ptr<std::thread> fLoadingThread;
 
    std::size_t fTrainingChunkNum;
@@ -155,7 +157,9 @@ public:
 
       bool replacement = false;
       fDNumEntries = 1111;
-      fSampler = std::make_unique<RSampler>(fSampleStrategy, replacement, 42, fShuffle, fSetSeed, fLoadEager);
+      fTrainingSampler = std::make_unique<RSampler>(fSampleStrategy, 42, replacement, fShuffle, fSetSeed, fLoadEager);
+      fValidationSampler = std::make_unique<RSampler>(fSampleStrategy, 42, replacement, fShuffle, fSetSeed, fLoadEager);
+        
       fTensorOperations = std::make_unique<RTensorOperations>(fShuffle, fSetSeed);
       fBatchLoader = std::make_unique<RBatchLoader>(fBatchSize, fNumDatasetCols, fDNumEntries, fDropRemainder);
       
@@ -190,10 +194,22 @@ public:
               fNumValidationEntriesDatasets.push_back(ValidationDataset.GetShape()[0]);
          }
 
-         std::size_t NumTrainingEntries = std::accumulate(fNumTrainingEntriesDatasets.begin(), fNumTrainingEntriesDatasets.end(), 0);
-         std::size_t NumValidationEntries = std::accumulate(fNumValidationEntriesDatasets.begin(), fNumValidationEntriesDatasets.end(), 0);
-         fTrainingBatchLoader = std::make_unique<RBatchLoader>(fBatchSize, fNumDatasetCols, NumTrainingEntries, fDropRemainder);
-         fValidationBatchLoader = std::make_unique<RBatchLoader>(fBatchSize, fNumDatasetCols, NumValidationEntries, fDropRemainder);
+         if (sampleType == "random") {
+           std::size_t NumTrainingEntries = std::accumulate(fNumTrainingEntriesDatasets.begin(), fNumTrainingEntriesDatasets.end(), 0);
+           std::size_t NumValidationEntries = std::accumulate(fNumValidationEntriesDatasets.begin(), fNumValidationEntriesDatasets.end(), 0);
+           fTrainingBatchLoader = std::make_unique<RBatchLoader>(fBatchSize, fNumDatasetCols, NumTrainingEntries, fDropRemainder);
+           fValidationBatchLoader = std::make_unique<RBatchLoader>(fBatchSize, fNumDatasetCols, NumValidationEntries, fDropRemainder);
+         }
+
+         else if (sampleType == "undersampling") {
+           std::size_t NumTrainingEntries = fTrainingSampler->SetupRandomUnderSampler(fTrainingDatasets);
+           std::size_t NumValidationEntries = fValidationSampler->SetupRandomUnderSampler(fValidationDatasets);
+
+           std::cout << "Undersampling entries " << NumTrainingEntries << " "<< NumValidationEntries << std::endl; 
+           
+           fTrainingBatchLoader = std::make_unique<RBatchLoader>(fBatchSize, fNumDatasetCols, NumTrainingEntries, fDropRemainder);
+           fValidationBatchLoader = std::make_unique<RBatchLoader>(fBatchSize, fNumDatasetCols, NumValidationEntries, fDropRemainder);
+         }
       }
       
       else {
@@ -269,8 +285,16 @@ public:
      if (fLoadEager) {
      
         TMVA::Experimental::RTensor<float> TrainingDataset({0, 0});
-        fSampler->RandomSampler(TrainingDataset, fTrainingDatasets);
-        
+        if (fSampleType == "random") {
+          fTrainingSampler->RandomSampler(TrainingDataset, fTrainingDatasets);
+        }
+
+        else if (fSampleType == "undersampling") {
+          std::cout << "Training undersampling" << std::endl;
+          fTrainingSampler->RandomUnderSampler(TrainingDataset, fTrainingDatasets);
+          std::cout << "training (" << TrainingDataset.GetShape()[0] << ") " << TrainingDataset << std::endl;
+        }
+
         fTrainingBatchLoader->CreateBatches(TrainingDataset, 1, fQueue);        
      }
      
@@ -293,10 +317,19 @@ public:
       fValidationEpochActive = true;
       
       if (fLoadEager) {
-
          TMVA::Experimental::RTensor<float> ValidationDataset({0, 0});
-         fSampler->RandomSampler(ValidationDataset, fValidationDatasets);
+         
+         if (fSampleType == "random") {
+             fValidationSampler->RandomSampler(ValidationDataset, fValidationDatasets);
+           }
+         
+         else if (fSampleType == "undersampling") {
+           std::cout << "Training undersampling" << std::endl;
+           fValidationSampler->RandomUnderSampler(ValidationDataset, fValidationDatasets);
+           std::cout << "Validation (" << ValidationDataset.GetShape()[0] << ") " << ValidationDataset << std::endl;
+        }
 
+         // fValidationBatchLoader = std::make_unique<RBatchLoader>(fBatchSize, fNumDatasetCols, ValidationDataset.GetShape()[0], fDropRemainder);
          fValidationBatchLoader->CreateBatches(ValidationDataset, 1, fQueue);
       }
 
