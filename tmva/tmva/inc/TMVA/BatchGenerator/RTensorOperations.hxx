@@ -59,6 +59,7 @@ public:
     std::size_t rows = Tensor.GetShape()[0];
     std::size_t cols = Tensor.GetShape()[1];
 
+    ShuffledTensor.Resize({rows, cols});
     // make an identity permutation map
     std::vector<Long_t> indices(rows);
 

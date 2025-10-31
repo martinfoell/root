@@ -39,14 +39,18 @@ private:
    std::mt19937 fGen;
    bool fShuffle;
    std::size_t fSetSeed;
+   float fSamplingStrategy;
+   bool fReplacement;
    bool fLoadEager;
    std::vector<std::size_t> fSamples;
    std::vector<std::size_t> fSamplesCycled;
    std::vector<std::pair<std::size_t, std::size_t>> fSampleIntervals;
    std::unique_ptr<RTensorOperations> fTensorOperations;   
 public:
-   RSampler(std::size_t random_state = 42, bool shuffle = true, const std::size_t setSeed = 0, bool loadEager = false)
-      : fGen(random_state),
+   RSampler(float samplingStrategy, std::size_t randomState = 42, bool replacement = false, bool shuffle = true, const std::size_t setSeed = 0, bool loadEager = false)
+      : fSamplingStrategy(samplingStrategy),
+        fGen(randomState),
+        fReplacement(replacement),
         fShuffle(shuffle),
         fSetSeed(setSeed),
         fLoadEager(loadEager)
@@ -54,15 +58,89 @@ public:
       fTensorOperations = std::make_unique<RTensorOperations>(fShuffle, fSetSeed);
    }
 
+   void SampleWithReplacement(std::size_t n_samples, std::size_t max){
+    std::uniform_int_distribution<> dist(0, max);
+    fSamples.clear();
+    fSamples.reserve(n_samples);
+    for (std::size_t i = 0; i < n_samples; ++i) {
+       std::size_t val = dist(fGen);
+       fSamples.push_back(val);
+    }
+   }
+
+   void SampleWithoutReplacement(std::size_t n_samples, std::size_t max){
+      std::vector<std::size_t> UniqueSamples;
+      UniqueSamples.reserve(max);
+      fSamples.clear();
+      fSamples.reserve(n_samples);   
+
+      for (std::size_t i = 0; i < max; ++i)
+         UniqueSamples.push_back(i);
+      std::shuffle(UniqueSamples.begin(), UniqueSamples.end(), fGen);
+      
+      for (std::size_t i = 0; i < n_samples; ++i) {
+         fSamples.push_back(UniqueSamples[i]);
+      }
+   }
+   
+
    void RandomSampler(TMVA::Experimental::RTensor<float> &SampledTensor, std::vector<TMVA::Experimental::RTensor<float>> &Tensors) {
-      if (fLoadEager) {
-         std::size_t rows = SampledTensor.GetShape()[0];
-         std::size_t cols = SampledTensor.GetShape()[1];         
+         std::size_t rows = 0;
+         for (std::size_t i = 0; i < Tensors.size(); i++) {
+            rows += Tensors[i].GetShape()[0];
+         }
+         std::size_t cols = Tensors[0].GetShape()[1];
+         
          TMVA::Experimental::RTensor<float> Tensor({rows, cols});
          fTensorOperations->ConcatinateTensors(Tensor, Tensors);
+         
+         SampledTensor = TMVA::Experimental::RTensor<float>({rows, cols});
          fTensorOperations->ShuffleTensor(SampledTensor, Tensor);
-        }
    }
+
+   void RandomUnderSampler(TMVA::Experimental::RTensor<float> &ShuffledSampledTensor, std::vector<TMVA::Experimental::RTensor<float>> &Tensors) {
+      std::size_t major;
+      std::size_t minor;
+
+      if (Tensors[0].GetShape()[0] > Tensors[1].GetShape()[0]) {
+         major = 0;
+         minor = 1;
+      }
+      else {
+         major = 1;
+         minor = 0;         
+      }
+
+      std::size_t n_major = Tensors[major].GetShape()[0];
+      std::size_t n_minor = Tensors[minor].GetShape()[0];
+
+      std::size_t n_rMajor = static_cast<std::size_t>(n_minor / fSamplingStrategy);
+
+      if (fReplacement) {
+         SampleWithReplacement(n_rMajor, n_major);         
+      }
+      
+      else {
+         SampleWithoutReplacement(n_rMajor, n_major);                  
+      }
+
+      std::size_t cols = Tensors[0].GetShape()[1];
+      ShuffledSampledTensor.Resize({n_minor + n_rMajor, cols});
+      
+      TMVA::Experimental::RTensor<float> SampledTensor({n_minor + n_rMajor, cols});
+      TMVA::Experimental::RTensor<float> UnderSampledTensor({n_rMajor, cols});
+      
+      std::size_t index = 0;
+      for (std::size_t i = 0; i < n_rMajor; i++) {
+         std::copy(Tensors[major].GetData() + fSamples[i] * cols, Tensors[major].GetData() + (fSamples[i]+1) * cols,
+                   UnderSampledTensor.GetData() + index * cols);
+         index++;
+      }
+
+      fTensorOperations->ConcatinateTwoTensors(SampledTensor, UnderSampledTensor, Tensors[minor]);
+      fTensorOperations->ShuffleTensor(ShuffledSampledTensor, SampledTensor);
+   }
+
       // else if (fNumDataFrames > 1) {
       //   std::size_t lastBatch = 1;
         
@@ -141,96 +219,58 @@ public:
 
       
    // }
-   void GeneratorWithReplacement(std::size_t n_samples, std::size_t max){
-    std::uniform_int_distribution<> dist(0, max);
-    fSamples.clear();
-    fSamples.reserve(n_samples);
-    for (std::size_t i = 0; i < n_samples; ++i) {
-       std::size_t val = dist(fGen);
-       fSamples.push_back(val);
-    }
-   }
 
-   void GeneratorWithoutReplacement(std::size_t n_samples, std::size_t max){
-      std::vector<std::size_t> UniqueSamples;
-      UniqueSamples.reserve(max);
-      fSamples.clear();
-      fSamples.reserve(n_samples);   
+   // void CycleSortKeepDuplicates() {
+   //    std::map<std::size_t, std::size_t> counts;
+   //    for (std::size_t x : fSamples) counts[x]++;
 
-      for (std::size_t i = 0; i < max; ++i)
-         UniqueSamples.push_back(i);
-      std::shuffle(UniqueSamples.begin(), UniqueSamples.end(), fGen);
-      
-      for (std::size_t i = 0; i < n_samples; ++i) {
-         fSamples.push_back(UniqueSamples[i]);
-      }
-   }
+   //    for (const auto& [num, count] : counts) {
+   //      fSamplesCycled.push_back(num);
+   //    }
 
-   void CycleSortKeepDuplicates() {
-      std::map<std::size_t, std::size_t> counts;
-      for (std::size_t x : fSamples) counts[x]++;
+   //    for (const auto& [num, count] : counts) {
+   //       for (std::size_t i = 1; i < count; ++i) {
+   //          fSamplesCycled.push_back(num);
+   //       }
+   //    }
+   // }
 
-      for (const auto& [num, count] : counts) {
-        fSamplesCycled.push_back(num);
-      }
+   // void FindContinuousIntervals() {
+   //    std::size_t start = fSamples[0];
+   //    std::size_t end = fSamples[0] + 1;
 
-      for (const auto& [num, count] : counts) {
-         for (std::size_t i = 1; i < count; ++i) {
-            fSamplesCycled.push_back(num);
-         }
-      }
-   }
+   //    for (std::size_t i = 1; i < fSamples.size(); ++i) {
+   //       if (fSamples[i] == end) {
+   //          end = fSamples[i] + 1;
+   //       } else if (fSamples[i] != end) {
+   //          fSampleIntervals.emplace_back(start, end);
+   //          start = fSamples[i];
+   //          end = fSamples[i] + 1;
+   //       }
+   //    }
+   //    fSampleIntervals.emplace_back(start, end);
+   // }
 
-   void FindContinuousIntervals() {
-      std::size_t start = fSamples[0];
-      std::size_t end = fSamples[0] + 1;
 
-      for (std::size_t i = 1; i < fSamples.size(); ++i) {
-         if (fSamples[i] == end) {
-            end = fSamples[i] + 1;
-         } else if (fSamples[i] != end) {
-            fSampleIntervals.emplace_back(start, end);
-            start = fSamples[i];
-            end = fSamples[i] + 1;
-         }
-      }
-      fSampleIntervals.emplace_back(start, end);
-   }
+   // std::vector<std::size_t> GetWithoutReplacementSamples(std::size_t n_samples, std::size_t max) {
+   //    GeneratorWithoutReplacement(n_samples, max);
+   //    return fSamples;
+   // }
 
-    void RandomUnderSample(TMVA::Experimental::RTensor<float> &UnderSampledTensor, TMVA::Experimental::RTensor<float> &Tensor) {
-      std::size_t n_samples = UnderSampledTensor.GetShape()[0];
-      std::size_t max = Tensor.GetShape()[0];
-      std::size_t cols = Tensor.GetShape()[1];
-      
-      GeneratorWithoutReplacement(n_samples, max);
-      
-      std::size_t index = 0;
-      for (std::size_t i = 0; i < n_samples; i++) {
-         std::copy(Tensor.GetData() + i * cols, Tensor.GetData() + (i+1) * cols,
-                   UnderSampledTensor.GetData() + index * cols);
-         index++;
-      }
-   }
+   // std::vector<std::size_t> GetWithReplacementSamples(std::size_t n_samples, std::size_t max) {
+   //    GeneratorWithReplacement(n_samples, max);
+   //    return fSamples;
+   // }
 
-   std::vector<std::size_t> GetWithoutReplacementSamples(std::size_t n_samples, std::size_t max) {
-      GeneratorWithoutReplacement(n_samples, max);
-      return fSamples;
-   }
+   // std::vector<std::pair<std::size_t, std::size_t>> GetSampleIntervals() {
+   //    FindContinuousIntervals();
+   //    return fSampleIntervals;
+   // }
 
-   std::vector<std::size_t> GetWithReplacementSamples(std::size_t n_samples, std::size_t max) {
-      GeneratorWithReplacement(n_samples, max);
-      return fSamples;
-   }
-
-   std::vector<std::pair<std::size_t, std::size_t>> GetSampleIntervals() {
-      FindContinuousIntervals();
-      return fSampleIntervals;
-   }
-
-   std::vector<std::size_t> GetSamplesCycled() {
-      CycleSortKeepDuplicates();
-      return fSamplesCycled;
-   }
+   // std::vector<std::size_t> GetSamplesCycled() {
+   //    CycleSortKeepDuplicates();
+   //    return fSamplesCycled;
+   // }
    
 };
 
