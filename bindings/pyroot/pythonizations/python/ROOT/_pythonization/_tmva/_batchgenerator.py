@@ -48,7 +48,6 @@ class BaseGenerator:
 
         if not columns:
             columns = x_rdf.GetColumnNames()
-            print(columns)
         template_string = ""
 
         self.given_columns = []
@@ -83,7 +82,6 @@ class BaseGenerator:
     def __init__(
         self,
         rdataframes: ROOT.RDF.RNode | list[ROOT.RDF.RNode] = list(),            
-        mixture_weights: list[float] = list(),
         batch_size: int = 0,
         chunk_size: int = 0,
         block_size: int = 0,            
@@ -100,6 +98,8 @@ class BaseGenerator:
         load_eager: bool = False,
         sampling_type: str = "random",
         sampling_strategy: float = 0.5,
+        random_state: int = 0,
+        replacement: bool = False,
     ):
         """Wrapper around the Cpp RBatchGenerator
 
@@ -152,7 +152,7 @@ class BaseGenerator:
                     using RBatchGenerator"
             )
 
-        if chunk_size < batch_size and load_eager == False:
+        if (chunk_size < batch_size) and load_eager == False:
             raise ValueError(
                 f"chunk_size cannot be smaller than batch_size: chunk_size: \
                     {chunk_size}, batch_size: {batch_size}"
@@ -170,16 +170,12 @@ class BaseGenerator:
             )
 
         if not isinstance(rdataframes, list):
-            print("rdf not a list")
             rdataframes = [rdataframes]
         self.noded_rdfs = [RDF.AsRNode(rdf) for rdf in rdataframes]
         
         if isinstance(target, str):
             target = [target]
 
-        if not isinstance(target, list):
-            print("target is not a list")
-            
         self.target_columns = target
         self.weights_column = weights
 
@@ -238,7 +234,6 @@ class BaseGenerator:
 
         self.generator = TMVA.Experimental.Internal.RBatchGenerator(template)(
             self.noded_rdfs,
-            mixture_weights,
             chunk_size,
             block_size,            
             batch_size,
@@ -253,6 +248,8 @@ class BaseGenerator:
             load_eager,
             sampling_type,
             sampling_strategy,
+            random_state,
+            replacement,
         )
 
         atexit.register(self.DeActivate)
@@ -438,9 +435,9 @@ class BaseGenerator:
 
         return_data = tf.constant(data, shape=(batch_size, num_columns))
 
-        if batch_size != self.batch_size:
-            return_data = tf.pad(return_data, tf.constant(
-                [[0, self.batch_size - batch_size], [0, 0]]))
+        # if batch_size != self.batch_size:
+        #     return_data = tf.pad(return_data, tf.constant(
+        #         [[0, self.batch_size - batch_size], [0, 0]]))
 
         # Splice target column from the data if weight is given
         if self.target_given:
@@ -669,25 +666,111 @@ class ValidationRBatchGenerator:
         
         return None    
     
-def CreateNumPyGenerators(
+def RandomUnderSampler(sampling_strategy, random_state, replacement):
+    sampler = {
+        "name": "RandomUnderSampler",
+        "sampling_type": "undersampling",
+        "sampling_strategy": sampling_strategy,
+        "random_state": random_state,
+        "replacement": replacement,
+    }
+
+    return sampler
+
+def RandomOverSampler(sampling_strategy, random_state):
+    sampler = {
+        "name": "RandomOverSampler",
+        "sampling_type": "oversampling",
+        "sampling_strategy": sampling_strategy,
+        "random_state": random_state,
+    }
+
+    return sampler
+
+def ChunkLoader(chunk_size = 0, block_size = 0, max_chunks = 0):
+    loader = {
+        "name": "ChunkLoader",
+        "chunk_size": chunk_size,
+        "block_size": block_size,
+        "max_chunks": max_chunks,
+    }
+
+    return loader
+
+def Loader(loader):
+    if loader is None:
+        load_eager = True
+        chunk_size = 0
+        block_size = 0
+        max_chunks = 0
+
+    elif loader["name"] == "ChunkLoader":
+        load_eager = False
+        chunk_size = loader["chunk_size"]        
+        block_size = loader["block_size"]
+        max_chunks = loader["max_chunks"]
+
+    output_loader = {
+        "name": "ChunkLoader",
+        "load_eager": load_eager,        
+        "chunk_size": chunk_size,
+        "block_size": block_size,
+        "max_chunks": max_chunks,
+    }
+    
+    return output_loader
+        
+        
+def Sampler(sampler):
+    if sampler is None:
+        sampling_type = "random"
+        sampling_strategy = 1
+        random_state = 0
+        replacement = False
+    
+    elif sampler["name"] == "RandomUnderSampler":
+        sampling_type = sampler["sampling_type"]        
+        sampling_strategy = sampler["sampling_strategy"]
+        random_state = sampler["random_state"]
+        replacement = sampler["replacement"]        
+
+    elif sampler["name"] == "RandomOverSampler":
+        sampling_type = sampler["sampling_type"]        
+        sampling_strategy = sampler["sampling_strategy"]
+        random_state = sampler["random_state"]
+        replacement = True
+        
+    output_sampler = {
+        "sampling_type": sampling_type,
+        "sampling_strategy": sampling_strategy,
+        "random_state": random_state,
+        "replacement": replacement,
+    }
+
+    return output_sampler
+        
+# NumPyDataLoader
+# TorchDataLoader
+# TensorFlowDataLoader
+
+# NumPyDataset
+# TorchDataset
+# TensorFlowDataset
+
+def NumPyDataLoader(
     rdataframes: ROOT.RDF.RNode | list[ROOT.RDF.RNode] = list(),
-    mixture_weights: list[float] = list(),
     batch_size: int = 0,
-    chunk_size: int = 0,
-    block_size: int = 0,        
     columns: list[str] = list(),
     max_vec_sizes: dict[str, int] = dict(),
     vec_padding: int = 0,
     target: str | list[str] = list(),
     weights: str = "",
     validation_split: float = 0.0,
-    max_chunks: int = 0,
     shuffle: bool = True,
     drop_remainder=True,
     set_seed: int = 0,
-    load_eager: bool = False,
-    sampling_type: str = "random",
-    sampling_strategy: float = 0.5,
+    loader=None,
+    sampler=None,
 ) -> Tuple[TrainRBatchGenerator, ValidationRBatchGenerator]:
     """
     Return two batch generators based on the given ROOT file and tree or RDataFrame
@@ -742,9 +825,20 @@ def CreateNumPyGenerators(
 
     import numpy as np
 
+    output_loader = Loader(loader)
+    load_eager = output_loader["load_eager"]        
+    chunk_size = output_loader["chunk_size"]        
+    block_size = output_loader["block_size"]
+    max_chunks = output_loader["max_chunks"]
+    
+    output_sampler = Sampler(sampler)
+    sampling_type = output_sampler["sampling_type"]        
+    sampling_strategy = output_sampler["sampling_strategy"]
+    random_state = output_sampler["random_state"]
+    replacement = output_sampler["replacement"]        
+
     base_generator = BaseGenerator(
         rdataframes,
-        mixture_weights,
         batch_size,
         chunk_size,
         block_size,        
@@ -761,6 +855,8 @@ def CreateNumPyGenerators(
         load_eager,
         sampling_type,
         sampling_strategy,
+        random_state,
+        replacement,
     )
 
     train_generator = TrainRBatchGenerator(
@@ -777,25 +873,20 @@ def CreateNumPyGenerators(
     return train_generator, validation_generator
 
 
-def CreateTFDatasets(
+def TensorFlowDataLoader(
     rdataframes: ROOT.RDF.RNode | list[ROOT.RDF.RNode] = list(),
-    mixture_weights: list[float] = list(),
     batch_size: int = 0,
-    chunk_size: int = 0,
-    block_size: int = 0,        
     columns: list[str] = list(),
     max_vec_sizes: dict[str, int] = dict(),
     vec_padding: int = 0,
     target: str | list[str] = list(),
     weights: str = "",
     validation_split: float = 0.0,
-    max_chunks: int = 0,
     shuffle: bool = True,
     drop_remainder=True,
     set_seed: int = 0,
-    load_eager: bool = False,
-    sampling_type: str = "random",
-    sampling_strategy: float = 0.5,
+    loader=None,
+    sampler=None,
 ) -> Tuple[tf.data.Dataset, tf.data.Dataset]:
     """
     Return two Tensorflow Datasets based on the given ROOT file and tree or RDataFrame
@@ -849,9 +940,20 @@ def CreateTFDatasets(
     """
     import tensorflow as tf
 
+    output_loader = Loader(loader)
+    load_eager = output_loader["load_eager"]        
+    chunk_size = output_loader["chunk_size"]        
+    block_size = output_loader["block_size"]
+    max_chunks = output_loader["max_chunks"]
+    
+    output_sampler = Sampler(sampler)
+    sampling_type = output_sampler["sampling_type"]        
+    sampling_strategy = output_sampler["sampling_strategy"]
+    random_state = output_sampler["random_state"]
+    replacement = output_sampler["replacement"]        
+    
     base_generator = BaseGenerator(
         rdataframes,
-        mixture_weights,
         batch_size,
         chunk_size,
         block_size,
@@ -868,6 +970,8 @@ def CreateTFDatasets(
         load_eager,
         sampling_type,
         sampling_strategy,
+        random_state,
+        replacement,
     )
 
     train_generator = TrainRBatchGenerator(
@@ -883,32 +987,32 @@ def CreateTFDatasets(
     # No target and weights given
     if target == "":
         batch_signature = tf.TensorSpec(
-            shape=(batch_size, num_train_columns), dtype=tf.float32
+            shape=(None, num_train_columns), dtype=tf.float32
         )
 
     # Target given, no weights given
     elif weights == "":
         batch_signature = (
-            tf.TensorSpec(shape=(batch_size, num_train_columns),
+            tf.TensorSpec(shape=(None, num_train_columns),
                           dtype=tf.float32),
-            tf.TensorSpec(shape=(batch_size, num_target_columns),
+            tf.TensorSpec(shape=(None, num_target_columns),
                           dtype=tf.float32),
         )
 
     # Target and weights given
     else:
         batch_signature = (
-            tf.TensorSpec(shape=(batch_size, num_train_columns),
+            tf.TensorSpec(shape=(None, num_train_columns),
                           dtype=tf.float32),
-            tf.TensorSpec(shape=(batch_size, num_target_columns),
+            tf.TensorSpec(shape=(None, num_target_columns),
                           dtype=tf.float32),
-            tf.TensorSpec(shape=(batch_size, 1), dtype=tf.float32),
+            tf.TensorSpec(shape=(None, 1), dtype=tf.float32),
         )
 
     ds_train = tf.data.Dataset.from_generator(
         train_generator, output_signature=batch_signature
     )
-
+    
     # Give access to the columns function of the training set
     setattr(ds_train, "columns", train_generator.columns)
     setattr(ds_train, "train_columns", train_generator.train_columns)
@@ -934,25 +1038,20 @@ def CreateTFDatasets(
     return ds_train, ds_validation
 
 
-def CreatePyTorchGenerators(
+def PyTorchDataLoader(
     rdataframes: ROOT.RDF.RNode | list[ROOT.RDF.RNode] = list(),
-    mixture_weights: list[float] = list(),    
     batch_size: int = 0,
-    chunk_size: int = 0,
-    block_size: int = 0,        
     columns: list[str] = list(),
     max_vec_sizes: dict[str, int] = dict(),
     vec_padding: int = 0,
     target: str | list[str] = list(),
     weights: str = "",
     validation_split: float = 0.0,
-    max_chunks: int = 0,
     shuffle: bool = True,
     drop_remainder=True,
     set_seed: int = 0,
-    load_eager: bool = False,
-    sampling_type: str = "random",
-    sampling_strategy: float = 0.5,
+    loader=None,
+    sampler=None,
 ) -> Tuple[TrainRBatchGenerator, ValidationRBatchGenerator]:
     """
     Return two Tensorflow Datasets based on the given ROOT file and tree or RDataFrame
@@ -1004,9 +1103,20 @@ def CreatePyTorchGenerators(
             batches are loaded during the training. Before training, the
             validation generator will return no batches.
     """
+    output_loader = Loader(loader)
+    load_eager = output_loader["load_eager"]        
+    chunk_size = output_loader["chunk_size"]        
+    block_size = output_loader["block_size"]
+    max_chunks = output_loader["max_chunks"]
+    
+    output_sampler = Sampler(sampler)
+    sampling_type = output_sampler["sampling_type"]        
+    sampling_strategy = output_sampler["sampling_strategy"]
+    random_state = output_sampler["random_state"]
+    replacement = output_sampler["replacement"]        
+    
     base_generator = BaseGenerator(
         rdataframes,
-        mixture_weights,
         batch_size,
         chunk_size,
         block_size,
@@ -1023,6 +1133,8 @@ def CreatePyTorchGenerators(
         load_eager,
         sampling_type,
         sampling_strategy,
+        random_state,
+        replacement,
     )
 
     train_generator = TrainRBatchGenerator(
@@ -1037,3 +1149,350 @@ def CreatePyTorchGenerators(
     )
 
     return train_generator, validation_generator
+
+
+def NumPyDataset(
+    rdataframes: ROOT.RDF.RNode | list[ROOT.RDF.RNode] = list(),
+    columns: list[str] = list(),
+    max_vec_sizes: dict[str, int] = dict(),
+    vec_padding: int = 0,
+    target: str | list[str] = list(),
+    weights: str = "",
+    validation_split: float = 0.0,
+    shuffle: bool = True,
+    set_seed: int = 0,
+) -> Tuple[TrainRBatchGenerator, ValidationRBatchGenerator]:
+    """
+    Return two batch generators based on the given ROOT file and tree or RDataFrame
+    The first generator returns training batches, while the second generator
+    returns validation batches
+
+    Args:
+        rdataframe (RNode): Name of RNode object.
+        columns (list[str], optional):
+            Columns to be returned. If not given, all columns are used.
+        max_vec_sizes (list[int], optional):
+            Size of each column that consists of vectors.
+            Required when using vector based columns
+        target (str|list[str], optional):
+            Column(s) used as target.
+        weights (str, optional):
+            Column used to weight events.
+            Can only be used when a target is given
+        validation_split (float, optional):
+            The ratio of batches being kept for validation.
+            Value has to be from 0.0 to 1.0. Defaults to 0.0.
+        max_chunks (int, optional):
+            The number of chunks that should be loaded for an epoch.
+            If not given, the whole file is used
+        shuffle (bool):
+            randomize the training batches every epoch.
+            Defaults to True
+
+    Returns:
+        TrainRBatchGenerator or
+            Tuple[TrainRBatchGenerator, ValidationRBatchGenerator]:
+            If validation split is 0, return TrainBatchGenerator.
+
+            Otherwise two generators are returned. One used to load training
+            batches, and one to load validation batches. NOTE: the validation
+            batches are loaded during the training. Before training, the
+            validation generator will return no batches.
+    """
+
+    import numpy as np
+
+    # setup to create a dataset
+    batch_size=0
+    drop_remainder=False
+    loader=None
+    sampler=None
+            
+    train_generator, validation_generator = NumPyDataLoader(
+        rdataframes,
+        batch_size,
+        columns,
+        max_vec_sizes,
+        vec_padding,
+        target,
+        weights,
+        validation_split,
+        shuffle,
+        drop_remainder,
+        set_seed,
+        loader,
+        sampler)
+        
+    return next(iter(train_generator)), next(iter(validation_generator))        
+
+
+def TensorFlowDataset(
+    rdataframes: ROOT.RDF.RNode | list[ROOT.RDF.RNode] = list(),
+    columns: list[str] = list(),
+    max_vec_sizes: dict[str, int] = dict(),
+    vec_padding: int = 0,
+    target: str | list[str] = list(),
+    weights: str = "",
+    validation_split: float = 0.0,
+    shuffle: bool = True,
+    set_seed: int = 0,
+) -> Tuple[TrainRBatchGenerator, TrainRBatchGenerator]:
+    """
+    Return two Tensorflow Datasets based on the given ROOT file and tree or RDataFrame
+    The first generator returns training batches, while the second generator
+    returns validation batches
+
+    Args:
+        rdataframe (RNode): Name of RNode object.
+        batch_size (int): Size of the returned chunks.
+        chunk_size (int):
+            The size of the chunks loaded from the ROOT file. Higher chunk size
+            results in better randomization, but also higher memory usage.
+        columns (list[str], optional):
+            Columns to be returned. If not given, all columns are used.
+        max_vec_sizes (list[int], optional):
+            Size of each column that consists of vectors.
+            Required when using vector based columns
+        target (str|list[str], optional):
+            Column(s) used as target.
+        weights (str, optional):
+            Column used to weight events.
+            Can only be used when a target is given
+        validation_split (float, optional):
+            The ratio of batches being kept for validation.
+            Value has to be from 0.0 to 1.0. Defaults to 0.0.
+        max_chunks (int, optional):
+            The number of chunks that should be loaded for an epoch.
+            If not given, the whole file is used
+        shuffle (bool):
+            randomize the training batches every epoch.
+            Defaults to True
+        drop_remainder (bool):
+            Drop the remainder of data that is too small to compose full batch.
+            Defaults to True.
+            Let a data list [0, 1, 2, 3, 4, 5, 6, 7, 8, 9] with batch_size=4 be
+            given.
+            If drop_remainder = True, then two batches [0, 1, 2, 3] and
+            [4, 5, 6, 7] will be returned.
+            If drop_remainder = False, then three batches [0, 1, 2, 3],
+            [4, 5, 6, 7] and [8, 9] will be returned.
+
+    Returns:
+        TrainRBatchGenerator or
+            Tuple[TrainRBatchGenerator, ValidationRBatchGenerator]:
+            If validation split is 0, return TrainBatchGenerator.
+
+            Otherwise two generators are returned. One used to load training
+            batches, and one to load validation batches. NOTE: the validation
+            batches are loaded during the training. Before training, the
+            validation generator will return no batches.
+    """
+    import tensorflow as tf
+
+    batch_size=0
+    drop_remainder=False
+    load_eager=True
+    chunk_size=0
+    block_size=0
+    max_chunks=0
+
+    sampling_type="random"
+    sampling_strategy=1
+    random_state=0
+    replacement=False
+    
+    base_generator = BaseGenerator(
+        rdataframes,
+        batch_size,
+        chunk_size,
+        block_size,
+        columns,
+        max_vec_sizes,
+        vec_padding,
+        target,
+        weights,
+        validation_split,
+        max_chunks,
+        shuffle,
+        drop_remainder,
+        set_seed,
+        load_eager,
+        sampling_type,
+        sampling_strategy,
+        random_state,
+        replacement,
+    )
+
+    # batch_size = 12
+    
+    train_generator = TrainRBatchGenerator(
+        base_generator, base_generator.ConvertBatchToTF
+    )
+    validation_generator = ValidationRBatchGenerator(
+        base_generator, base_generator.ConvertBatchToTF
+    )
+
+    # return train_generator, validation_generator
+    num_train_columns = len(train_generator.train_columns)
+    num_target_columns = len(train_generator.target_columns)
+
+    # No target and weights given
+    if target == "":
+        batch_signature = tf.TensorSpec(
+            shape=(None, num_train_columns), dtype=tf.float32
+        )
+
+    # Target given, no weights given
+    elif weights == "":
+        batch_signature = (
+            tf.TensorSpec(shape=(None, num_train_columns),
+                          dtype=tf.float32),
+            tf.TensorSpec(shape=(None, num_target_columns),
+                          dtype=tf.float32),
+        )
+
+    # Target and weights given
+    else:
+        batch_signature = (
+            tf.TensorSpec(shape=(None, num_train_columns),
+                          dtype=tf.float32),
+            tf.TensorSpec(shape=(None, num_target_columns),
+                          dtype=tf.float32),
+            tf.TensorSpec(shape=(None, 1), dtype=tf.float32),
+        )
+
+    ds_train = tf.data.Dataset.from_generator(
+        train_generator, output_signature=batch_signature
+    )
+
+    # Give access to the columns function of the training set
+    setattr(ds_train, "columns", train_generator.columns)
+    setattr(ds_train, "train_columns", train_generator.train_columns)
+    setattr(ds_train, "target_column", train_generator.target_columns)
+    setattr(ds_train, "weights_column", train_generator.weights_column)
+    setattr(ds_train, "number_of_batches", train_generator.number_of_batches)
+
+    if validation_split == 0.0:
+        return next(iter(ds_train))
+
+    ds_validation = tf.data.Dataset.from_generator(
+        validation_generator, output_signature=batch_signature
+    )
+
+    # Give access to the columns function of the validation set
+    setattr(ds_validation, "columns", train_generator.columns)
+    setattr(ds_validation, "train_columns", train_generator.train_columns)
+    setattr(ds_validation, "target_column", train_generator.target_columns)
+    setattr(ds_validation, "weights_column", train_generator.weights_column)
+    setattr(ds_validation, "number_of_batches",
+            validation_generator.number_of_batches)
+
+    return next(iter(ds_train)), next(iter(ds_validation))
+
+def PyTorchDataset(
+    rdataframes: ROOT.RDF.RNode | list[ROOT.RDF.RNode] = list(),
+    columns: list[str] = list(),
+    max_vec_sizes: dict[str, int] = dict(),
+    vec_padding: int = 0,
+    target: str | list[str] = list(),
+    weights: str = "",
+    validation_split: float = 0.0,
+    shuffle: bool = True,
+    set_seed: int = 0,
+) -> Tuple[TrainRBatchGenerator, ValidationRBatchGenerator]:
+    """
+    Return two Tensorflow Datasets based on the given ROOT file and tree or RDataFrame
+    The first generator returns training batches, while the second generator
+    returns validation batches
+
+    Args:
+        rdataframe (RNode): Name of RNode object.
+        batch_size (int): Size of the returned chunks.
+        chunk_size (int):
+            The size of the chunks loaded from the ROOT file. Higher chunk size
+            results in better randomization, but also higher memory usage.
+        columns (list[str], optional):
+            Columns to be returned. If not given, all columns are used.
+        max_vec_sizes (list[int], optional):
+            Size of each column that consists of vectors.
+            Required when using vector based columns
+        target (str|list[str], optional):
+            Column(s) used as target.
+        weights (str, optional):
+            Column used to weight events.
+            Can only be used when a target is given
+        validation_split (float, optional):
+            The ratio of batches being kept for validation.
+            Value has to be from 0.0 to 1.0. Defaults to 0.0.
+        max_chunks (int, optional):
+            The number of chunks that should be loaded for an epoch.
+            If not given, the whole file is used
+        shuffle (bool):
+            randomize the training batches every epoch.
+            Defaults to True
+        drop_remainder (bool):
+            Drop the remainder of data that is too small to compose full batch.
+            Defaults to True.
+            Let a data list [0, 1, 2, 3, 4, 5, 6, 7, 8, 9] with batch_size=4 be
+            given.
+            If drop_remainder = True, then two batches [0, 1, 2, 3] and
+            [4, 5, 6, 7] will be returned.
+            If drop_remainder = False, then three batches [0, 1, 2, 3],
+            [4, 5, 6, 7] and [8, 9] will be returned.
+
+    Returns:
+        TrainRBatchGenerator or
+            Tuple[TrainRBatchGenerator, ValidationRBatchGenerator]:
+            If validation split is 0, return TrainBatchGenerator.
+
+            Otherwise two generators are returned. One used to load training
+            batches, and one to load validation batches. NOTE: the validation
+            batches are loaded during the training. Before training, the
+            validation generator will return no batches.
+    """
+    batch_size=0
+    drop_remainder=False
+    load_eager=True
+    chunk_size=0
+    block_size=0
+    max_chunks=0
+
+    sampling_type="random"
+    sampling_strategy=1
+    random_state=0
+    replacement=False
+    
+    base_generator = BaseGenerator(
+        rdataframes,
+        batch_size,
+        chunk_size,
+        block_size,
+        columns,
+        max_vec_sizes,
+        vec_padding,
+        target,
+        weights,
+        validation_split,
+        max_chunks,
+        shuffle,
+        drop_remainder,
+        set_seed,
+        load_eager,
+        sampling_type,
+        sampling_strategy,
+        random_state,
+        replacement,
+    )
+
+    train_generator = TrainRBatchGenerator(
+        base_generator, base_generator.ConvertBatchToPyTorch
+    )
+
+    if validation_split == 0.0:
+        return next(iter(train_generator))
+
+    validation_generator = ValidationRBatchGenerator(
+        base_generator, base_generator.ConvertBatchToPyTorch
+    )
+
+    return next(iter(train_generator)), next(iter(validation_generator))

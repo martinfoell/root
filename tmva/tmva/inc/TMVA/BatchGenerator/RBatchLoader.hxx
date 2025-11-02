@@ -79,6 +79,10 @@ public:
       fDropRemainder(dropRemainder)
    {
 
+     if (fBatchSize == 0) {
+       fBatchSize = fNumEntries;
+     }
+     
      fLeftoverBatchSize = fNumEntries % fBatchSize;
      fNumFullBatches = fNumEntries / fBatchSize;
 
@@ -91,7 +95,6 @@ public:
      else {
        fNumBatches = fNumFullBatches + fNumLeftoverBatches;
      }
-     
 
      fPrimaryLeftoverBatch =
          std::make_unique<TMVA::Experimental::RTensor<float>>(std::vector<std::size_t>{0, fNumColumns});

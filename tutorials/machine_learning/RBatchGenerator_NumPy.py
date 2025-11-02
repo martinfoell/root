@@ -23,15 +23,16 @@ target = "Type"
 
 num_of_epochs = 2
 
-gen_train, gen_validation = ROOT.TMVA.Experimental.CreateNumPyGenerators(
+chunk_loader = ROOT.TMVA.Experimental.ChunkLoader(chunk_size=chunk_size, block_size=block_size) 
+
+gen_train, gen_validation = ROOT.TMVA.Experimental.NumPyDataLoader(
     rdataframe,
     batch_size,    
-    chunk_size,
-    block_size,        
     target = target,
     validation_split = 0.3,
     shuffle = True,
-    drop_remainder = True
+    drop_remainder = True,
+    loader = chunk_loader,
 )
 
 for i in range(num_of_epochs):

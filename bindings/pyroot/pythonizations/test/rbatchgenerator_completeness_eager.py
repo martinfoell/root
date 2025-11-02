@@ -51,14 +51,13 @@ class RBatchGeneratorMultipleFiles(unittest.TestCase):
         try:
             df = ROOT.RDataFrame(self.tree_name, self.file_name1)
 
-            gen_train, gen_validation = ROOT.TMVA.Experimental.CreateNumPyGenerators(
+            gen_train, gen_validation = ROOT.TMVA.Experimental.NumPyDataLoader(
                 df,
                 batch_size=3,
                 target="b2",
                 validation_split=0.4,
                 shuffle=False,
                 drop_remainder=False,
-                load_eager = True                
             )
 
             results_x_train = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0]            
@@ -120,14 +119,13 @@ class RBatchGeneratorMultipleFiles(unittest.TestCase):
         try:
             df = ROOT.RDataFrame(self.tree_name, self.file_name1)
 
-            gen_train, gen_validation = ROOT.TMVA.Experimental.CreateNumPyGenerators(
+            gen_train, gen_validation = ROOT.TMVA.Experimental.NumPyDataLoader(
                 df,
                 batch_size=3,
                 target="b2",
                 validation_split=0.4,
                 shuffle=True,
                 drop_remainder=False,
-                load_eager = True
             )
 
             collected_x_train = []
@@ -184,14 +182,13 @@ class RBatchGeneratorMultipleFiles(unittest.TestCase):
         try:
             df = ROOT.RDataFrame(self.tree_name, self.file_name1)
 
-            gen_train, gen_validation = ROOT.TMVA.Experimental.CreateNumPyGenerators(
+            gen_train, gen_validation = ROOT.TMVA.Experimental.NumPyDataLoader(
                 df,
                 batch_size=3,
                 target="b2",
                 validation_split=0.4,
                 shuffle=False,
                 drop_remainder=False,
-                load_eager = True
             )
 
             next(iter(gen_train))
@@ -208,14 +205,13 @@ class RBatchGeneratorMultipleFiles(unittest.TestCase):
         try:
             df = ROOT.RDataFrame(self.tree_name, self.file_name1)
 
-            gen_train, gen_validation = ROOT.TMVA.Experimental.CreateNumPyGenerators(
+            gen_train, gen_validation = ROOT.TMVA.Experimental.NumPyDataLoader(
                 df,
                 batch_size=3,
                 target="b2",
                 validation_split=0.4,
                 shuffle=False,
                 drop_remainder=True,
-                load_eager = True
             )
 
             collected_x = []
@@ -250,14 +246,13 @@ class RBatchGeneratorMultipleFiles(unittest.TestCase):
             df = ROOT.RDataFrame(
                 self.tree_name, [self.file_name1, self.file_name2])
 
-            gen_train, gen_validation = ROOT.TMVA.Experimental.CreateNumPyGenerators(
+            gen_train, gen_validation = ROOT.TMVA.Experimental.NumPyDataLoader(
                 df,
                 batch_size=3,
                 target="b2",
                 validation_split=0.4,
                 shuffle=False,
                 drop_remainder=False,
-                load_eager = True
             )
 
             results_x_train = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]
@@ -315,7 +310,7 @@ class RBatchGeneratorMultipleFiles(unittest.TestCase):
         try:
             df = ROOT.RDataFrame("myTree", file_name)
 
-            gen_train, gen_validation = ROOT.TMVA.Experimental.CreateNumPyGenerators(
+            gen_train, gen_validation = ROOT.TMVA.Experimental.NumPyDataLoader(
                 df,
                 batch_size=3,
                 target=["b2", "b4"],
@@ -323,7 +318,6 @@ class RBatchGeneratorMultipleFiles(unittest.TestCase):
                 validation_split=0.4,
                 shuffle=False,
                 drop_remainder=False,
-                load_eager = True
             )
 
             results_x_train = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0]
@@ -405,14 +399,13 @@ class RBatchGeneratorMultipleFiles(unittest.TestCase):
         try:
             df = ROOT.RDataFrame("myTree", file_name)
 
-            gen_train, gen_validation = ROOT.TMVA.Experimental.CreateNumPyGenerators(
+            gen_train, gen_validation = ROOT.TMVA.Experimental.NumPyDataLoader(
                 df,
                 batch_size=3,
                 target="b2",
                 validation_split=0.4,
                 shuffle=False,
                 drop_remainder=False,
-                load_eager = True
             )
 
             results_x_train = [0.0, 0.0, 1.0, 10.0, 2.0,
@@ -475,14 +468,13 @@ class RBatchGeneratorMultipleFiles(unittest.TestCase):
 
             dff = df.Filter("b1 % 2 == 0", "name")
 
-            gen_train, gen_validation = ROOT.TMVA.Experimental.CreateNumPyGenerators(
+            gen_train, gen_validation = ROOT.TMVA.Experimental.NumPyDataLoader(
                 dff,
                 batch_size=3,
                 target="b2",
                 validation_split=0.4,
                 shuffle=False,
                 drop_remainder=False,
-                load_eager = True
             )
 
             results_x_train = [0.0, 2.0, 4.0]
@@ -542,14 +534,13 @@ class RBatchGeneratorMultipleFiles(unittest.TestCase):
 
             dff = df.Filter("b1 % 2 == 0", "name")
 
-            gen_train, _ = ROOT.TMVA.Experimental.CreateNumPyGenerators(
+            gen_train, _ = ROOT.TMVA.Experimental.NumPyDataLoader(
                 dff,
                 batch_size=3,
                 target="b2",
                 validation_split=0,
                 shuffle=False,
                 drop_remainder=False,
-                load_eager = True
             )
 
             results_x_train = [0.0, 2.0, 4.0, 6.0,
@@ -595,14 +586,13 @@ class RBatchGeneratorMultipleFiles(unittest.TestCase):
         try:
             df = ROOT.RDataFrame(self.tree_name, self.file_name1)
 
-            gen_train, gen_validation = ROOT.TMVA.Experimental.CreateNumPyGenerators(
+            gen_train, gen_validation = ROOT.TMVA.Experimental.NumPyDataLoader(
                 df,
                 batch_size=3,
                 target="b2",
                 validation_split=0.4,
                 shuffle=False,
                 drop_remainder=False,
-                load_eager = True
             )
 
             both_epochs_collected_x_val = []
@@ -667,14 +657,13 @@ class RBatchGeneratorMultipleFiles(unittest.TestCase):
         try:
             df = ROOT.RDataFrame(self.tree_name, self.file_name1)
 
-            gen_train, gen_validation = ROOT.TMVA.Experimental.CreateNumPyGenerators(
+            gen_train, gen_validation = ROOT.TMVA.Experimental.NumPyDataLoader(
                 df,
                 batch_size=3,
                 target="b2",
                 validation_split=0.4,
                 shuffle=False,
                 drop_remainder=False,
-                load_eager = True
             )
 
             number_of_training_batches = 0
@@ -714,7 +703,7 @@ class RBatchGeneratorMultipleFiles(unittest.TestCase):
         try:
             df = ROOT.RDataFrame("myTree", file_name)
 
-            gen_train, gen_validation = ROOT.TMVA.Experimental.CreatePyTorchGenerators(
+            gen_train, gen_validation = ROOT.TMVA.Experimental.PyTorchDataLoader(
                 df,
                 batch_size=3,
                 target=["b2", "b4"],
@@ -722,7 +711,6 @@ class RBatchGeneratorMultipleFiles(unittest.TestCase):
                 validation_split=0.4,
                 shuffle=False,
                 drop_remainder=False,
-                load_eager = True
             )
 
             results_x_train = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0]
@@ -792,6 +780,7 @@ class RBatchGeneratorMultipleFiles(unittest.TestCase):
             self.teardown_file(file_name)
             raise
 
+    
     def test13_TensorFlow(self):
         import tensorflow as tf
 
@@ -807,7 +796,7 @@ class RBatchGeneratorMultipleFiles(unittest.TestCase):
         try:
             df = ROOT.RDataFrame("myTree", file_name)
 
-            gen_train, gen_validation = ROOT.TMVA.Experimental.CreateTFDatasets(
+            gen_train, gen_validation = ROOT.TMVA.Experimental.TensorFlowDataLoader(
                 df,
                 batch_size=3,
                 target=["b2", "b4"],
@@ -815,16 +804,15 @@ class RBatchGeneratorMultipleFiles(unittest.TestCase):
                 validation_split=0.4,
                 shuffle=False,
                 drop_remainder=False,
-                load_eager = True
             )
 
             results_x_train = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0]
-            results_x_val = [6.0, 7.0, 8.0, 9.0, 0.0, 0.0]
+            results_x_val = [6.0, 7.0, 8.0, 9.0]
             results_y_train = [0.0, 0.0, 1.0, 100.0, 4.0,
                                200.0, 9.0, 300.0, 16.0, 400.0, 25.0, 500.0]
-            results_y_val = [36.0, 600.0, 49.0, 700.0, 64.0, 800.0, 81.0, 900.0, 0.0, 0.0, 0.0, 0.0]
+            results_y_val = [36.0, 600.0, 49.0, 700.0, 64.0, 800.0, 81.0, 900.0]
             results_z_train = [0.0, 10.0, 20.0, 30.0, 40.0, 50.0]
-            results_z_val = [60.0, 70.0, 80.0, 90.0, 0.0, 0.0]
+            results_z_val = [60.0, 70.0, 80.0, 90.0]
             
             collected_x_train = []
             collected_x_val = []
@@ -855,9 +843,9 @@ class RBatchGeneratorMultipleFiles(unittest.TestCase):
                 collected_z_val.append(z.numpy().tolist())
 
             x, y, z = next(iter_val)
-            self.assertTrue(x.shape == (3, 1))
-            self.assertTrue(y.shape == (3, 2))
-            self.assertTrue(z.shape == (3, 1))
+            self.assertTrue(x.shape == (1, 1))
+            self.assertTrue(y.shape == (1, 2))
+            self.assertTrue(z.shape == (1, 1))
             collected_x_val.append(x.numpy().tolist())
             collected_y_val.append(y.numpy().tolist())
             collected_z_val.append(z.numpy().tolist())
@@ -911,7 +899,7 @@ class RBatchGeneratorMultipleFiles(unittest.TestCase):
             try:
                 df = ROOT.RDataFrame(tree_name, file_name)
 
-                gen_train, gen_validation = ROOT.TMVA.Experimental.CreateNumPyGenerators(
+                gen_train, gen_validation = ROOT.TMVA.Experimental.NumPyDataLoader(
                     df,
                     batch_size=size_of_batch,
                     target=["b3", "b5"],
@@ -919,7 +907,6 @@ class RBatchGeneratorMultipleFiles(unittest.TestCase):
                     validation_split=0.3,
                     shuffle=False,
                     drop_remainder=False,
-                    load_eager = True
                 )
 
                 collect_x = []
@@ -1016,7 +1003,7 @@ class RBatchGeneratorMultipleFiles(unittest.TestCase):
             df = ROOT.RDataFrame(self.tree_name, self.file_name1)            
             for _ in range(2):            
 
-                gen_train, gen_validation = ROOT.TMVA.Experimental.CreateNumPyGenerators(
+                gen_train, gen_validation = ROOT.TMVA.Experimental.NumPyDataLoader(
                     df,
                     batch_size=3,
                     target="b2",
@@ -1024,7 +1011,6 @@ class RBatchGeneratorMultipleFiles(unittest.TestCase):
                     shuffle=True,
                     drop_remainder=False,
                     set_seed = 42,
-                    load_eager = True
                 )
 
                 collected_x_train = []
@@ -1085,7 +1071,7 @@ class RBatchGeneratorMultipleFiles(unittest.TestCase):
             df = ROOT.RDataFrame(self.tree_name, self.file_name3)
             max_vec_sizes = {"v1": 3, "v2": 2}
             
-            gen_train, gen_validation = ROOT.TMVA.Experimental.CreateNumPyGenerators(
+            gen_train, gen_validation = ROOT.TMVA.Experimental.NumPyDataLoader(
                 df,
                 batch_size=3,
                 target="b1",
@@ -1093,7 +1079,6 @@ class RBatchGeneratorMultipleFiles(unittest.TestCase):
                 max_vec_sizes=max_vec_sizes,                
                 shuffle=False,
                 drop_remainder=False,
-                load_eager = True
             )
         
             
@@ -1157,6 +1142,5 @@ class RBatchGeneratorMultipleFiles(unittest.TestCase):
             self.teardown_file(self.file_name3)
             raise
 
-            
 if __name__ == '__main__':
     unittest.main()

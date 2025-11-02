@@ -22,18 +22,20 @@ chunk_size = 5000
 block_size = 300
 
 rdataframe = ROOT.RDataFrame(tree_name, file_name)
+
 target = ["Type"]
 
+chunk_loader = ROOT.TMVA.Experimental.ChunkLoader(chunk_size=chunk_size, block_size=block_size)
+
 # Returns two TF.Dataset for training and validation batches.
-ds_train, ds_valid = ROOT.TMVA.Experimental.CreateTFDatasets(
+ds_train, ds_valid = ROOT.TMVA.Experimental.TensorFlowDataLoader(
     rdataframe,
     batch_size,    
-    chunk_size,
-    block_size,        
     target = target,
     validation_split = 0.3,
     shuffle = True,
-    drop_remainder = True
+    drop_remainder = False,
+    loader=chunk_loader,
 )
 
 num_of_epochs = 2

@@ -43,7 +43,7 @@ public:
       : fShuffle(shuffle),
         fSetSeed(setSeed)
    {
-      std::cout << "Shuffling here" << std::endl;
+   
    }
 
   void ShuffleTensor(TMVA::Experimental::RTensor<float> &ShuffledTensor, TMVA::Experimental::RTensor<float> &Tensor ) {

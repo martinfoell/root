@@ -24,15 +24,16 @@ target = "Type"
 
 # Returns two generators that return training and validation batches
 # as PyTorch tensors.
-gen_train, gen_validation = ROOT.TMVA.Experimental.CreatePyTorchGenerators(
+chunk_loader = ROOT.TMVA.Experimental.ChunkLoader(chunk_size=chunk_size, block_size=block_size) 
+
+gen_train, gen_validation = ROOT.TMVA.Experimental.PyTorchDataLoader(
     rdataframe,
     batch_size,    
-    chunk_size,
-    block_size,        
     target = target,
     validation_split = 0.3,
     shuffle = True,
     drop_remainder=True,
+    loader = chunk_loader,
 )
 
 # Get a list of the columns used for training

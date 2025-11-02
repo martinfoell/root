@@ -25,15 +25,27 @@ from ._rbdt import Compute, pythonize_rbdt
 
 def inject_rbatchgenerator(ns):
     from ._batchgenerator import (
-        CreateNumPyGenerators,
-        CreateTFDatasets,
-        CreatePyTorchGenerators,
+        ChunkLoader,
+        RandomUnderSampler,
+        RandomOverSampler,
+        NumPyDataLoader,
+        TensorFlowDataLoader,
+        PyTorchDataLoader,        
+        NumPyDataset,
+        TensorFlowDataset,
+        PyTorchDataset,        
     )
 
     python_batchgenerator_functions = [
-        CreateNumPyGenerators,
-        CreateTFDatasets,
-        CreatePyTorchGenerators,
+        ChunkLoader,
+        RandomUnderSampler,
+        RandomOverSampler,
+        NumPyDataLoader,
+        TensorFlowDataLoader,
+        PyTorchDataLoader,
+        NumPyDataset,
+        TensorFlowDataset,
+        PyTorchDataset,        
     ]
 
     for python_func in python_batchgenerator_functions:

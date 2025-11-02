@@ -68,11 +68,11 @@ private:
    std::vector<std::size_t> fNumValidationEntriesDatasets;
    
    std::size_t fSumNumEntries; 
-   std::vector<float> fMixtureWeights;
    float fValidationSplit;
 
    std::string fSampleType;
    float fSampleStrategy;
+   std::size_t fRandomState;
    std::unique_ptr<RChunkLoader<Args...>> fChunkLoader;
    std::unique_ptr<RDatasetLoader<Args...>> fDatasetLoader;
    std::unique_ptr<RBatchLoader> fBatchLoader;
@@ -108,6 +108,7 @@ private:
    bool fDataframeBalance{false};
    bool fQueue{true};
    bool fVector{false};
+   bool fReplacement;
   
    bool fEpochActive{false};
    bool fTrainingEpochActive{false};
@@ -129,13 +130,12 @@ private:
    std::queue<std::unique_ptr<TMVA::Experimental::RTensor<float>>> fValidationBatchQueue;
   
 public:
-   RBatchGenerator(const std::vector<ROOT::RDF::RNode> &rdfs, const std::vector<float> &mixtureWeights = {}, const std::size_t chunkSize = 0,
+   RBatchGenerator(const std::vector<ROOT::RDF::RNode> &rdfs, const std::size_t chunkSize = 0,
                    const std::size_t blockSize = 0, const std::size_t batchSize = 0, const std::vector<std::string> &cols = {},
                    const std::vector<std::size_t> &vecSizes = {}, const float vecPadding = 0.0, const float validationSplit = 0.0, const std::size_t maxChunks = 0, bool shuffle = true,
-                   bool dropRemainder = true, const std::size_t setSeed = 0, bool loadEager = false, std::string sampleType = "random", float sampleStrategy = 0.5)
+                   bool dropRemainder = true, const std::size_t setSeed = 0, bool loadEager = false, std::string sampleType = "random", float sampleStrategy = 0.5, const std::size_t randomState = 0, bool replacement = false)
 
       : f_rdfs(rdfs),
-        fMixtureWeights(mixtureWeights),
         fCols(cols),
         fChunkSize(chunkSize),
         fBlockSize(blockSize),
@@ -143,6 +143,8 @@ public:
         fValidationSplit(validationSplit),
         fSampleType(sampleType),
         fSampleStrategy(sampleStrategy),
+        fRandomState(randomState),
+        fReplacement(replacement),
         fMaxChunks(maxChunks),
         fDropRemainder(dropRemainder),
         fSetSeed(setSeed),
@@ -154,11 +156,9 @@ public:
         fTrainChunkTensor({0, 0}),
         fValidationChunkTensor({0, 0})
    {
-
-      bool replacement = false;
       fDNumEntries = 1111;
-      fTrainingSampler = std::make_unique<RSampler>(fSampleStrategy, 42, replacement, fShuffle, fSetSeed, fLoadEager);
-      fValidationSampler = std::make_unique<RSampler>(fSampleStrategy, 42, replacement, fShuffle, fSetSeed, fLoadEager);
+      fTrainingSampler = std::make_unique<RSampler>(fSampleStrategy, fRandomState, fReplacement, fShuffle, fSetSeed, fLoadEager);
+      fValidationSampler = std::make_unique<RSampler>(fSampleStrategy, fRandomState, fReplacement, fShuffle, fSetSeed, fLoadEager);
         
       fTensorOperations = std::make_unique<RTensorOperations>(fShuffle, fSetSeed);
       fBatchLoader = std::make_unique<RBatchLoader>(fBatchSize, fNumDatasetCols, fDNumEntries, fDropRemainder);
@@ -167,11 +167,6 @@ public:
       fSumVecSizes = std::accumulate(vecSizes.begin(), vecSizes.end(), 0);
       fNumDatasetCols = fNumColumns + fSumVecSizes - vecSizes.size();
 
-      if (fMixtureWeights.size() > 0) {
-         fDataframeBalance = true;
-         std::cout << "Weights provided" << std::endl;
-      }
-      
       if (loadEager) {
          for (std::size_t i = 0; i < fNumDataFrames; i++) {
               std::size_t NumEntries = f_rdfs[i].Count().GetValue();
@@ -197,6 +192,7 @@ public:
          if (sampleType == "random") {
            std::size_t NumTrainingEntries = std::accumulate(fNumTrainingEntriesDatasets.begin(), fNumTrainingEntriesDatasets.end(), 0);
            std::size_t NumValidationEntries = std::accumulate(fNumValidationEntriesDatasets.begin(), fNumValidationEntriesDatasets.end(), 0);
+           
            fTrainingBatchLoader = std::make_unique<RBatchLoader>(fBatchSize, fNumDatasetCols, NumTrainingEntries, fDropRemainder);
            fValidationBatchLoader = std::make_unique<RBatchLoader>(fBatchSize, fNumDatasetCols, NumValidationEntries, fDropRemainder);
          }
@@ -205,11 +201,18 @@ public:
            std::size_t NumTrainingEntries = fTrainingSampler->SetupRandomUnderSampler(fTrainingDatasets);
            std::size_t NumValidationEntries = fValidationSampler->SetupRandomUnderSampler(fValidationDatasets);
 
-           std::cout << "Undersampling entries " << NumTrainingEntries << " "<< NumValidationEntries << std::endl; 
-           
            fTrainingBatchLoader = std::make_unique<RBatchLoader>(fBatchSize, fNumDatasetCols, NumTrainingEntries, fDropRemainder);
            fValidationBatchLoader = std::make_unique<RBatchLoader>(fBatchSize, fNumDatasetCols, NumValidationEntries, fDropRemainder);
          }
+
+         else if (sampleType == "oversampling") {
+           std::size_t NumTrainingEntries = fTrainingSampler->SetupRandomOverSampler(fTrainingDatasets);
+           std::size_t NumValidationEntries = fValidationSampler->SetupRandomOverSampler(fValidationDatasets);
+
+           fTrainingBatchLoader = std::make_unique<RBatchLoader>(fBatchSize, fNumDatasetCols, NumTrainingEntries, fDropRemainder);
+           fValidationBatchLoader = std::make_unique<RBatchLoader>(fBatchSize, fNumDatasetCols, NumValidationEntries, fDropRemainder);
+         }
+         
       }
       
       else {
@@ -290,11 +293,13 @@ public:
         }
 
         else if (fSampleType == "undersampling") {
-          std::cout << "Training undersampling" << std::endl;
           fTrainingSampler->RandomUnderSampler(TrainingDataset, fTrainingDatasets);
-          std::cout << "training (" << TrainingDataset.GetShape()[0] << ") " << TrainingDataset << std::endl;
         }
 
+        else if (fSampleType == "oversampling") {
+          fTrainingSampler->RandomOverSampler(TrainingDataset, fTrainingDatasets);
+        }
+        
         fTrainingBatchLoader->CreateBatches(TrainingDataset, 1, fQueue);        
      }
      
@@ -324,12 +329,13 @@ public:
            }
          
          else if (fSampleType == "undersampling") {
-           std::cout << "Training undersampling" << std::endl;
            fValidationSampler->RandomUnderSampler(ValidationDataset, fValidationDatasets);
-           std::cout << "Validation (" << ValidationDataset.GetShape()[0] << ") " << ValidationDataset << std::endl;
-        }
+         }
 
-         // fValidationBatchLoader = std::make_unique<RBatchLoader>(fBatchSize, fNumDatasetCols, ValidationDataset.GetShape()[0], fDropRemainder);
+         else if (fSampleType == "oversampling") {
+           fValidationSampler->RandomOverSampler(ValidationDataset, fValidationDatasets);
+         }
+         
          fValidationBatchLoader->CreateBatches(ValidationDataset, 1, fQueue);
       }
 
