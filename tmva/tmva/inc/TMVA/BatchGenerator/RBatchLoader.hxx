@@ -41,19 +41,17 @@ which are loaded into a queue. This is done for both the training and validation
 class RBatchLoader {
 private:
    std::size_t fNumEntries;
-   std::size_t fNumColumns;   
-   
+   std::size_t fNumColumns;
+
    std::size_t fBatchSize;
    std::size_t fLeftoverBatchSize;
    std::size_t fNumFullBatches;
    std::size_t fNumLeftoverBatches;
    std::size_t fNumBatches;
 
-
-
    bool fIsActive = false;
    bool fDropRemainder;
-  
+
    std::mutex fBatchLock;
    std::condition_variable fBatchCondition;
 
@@ -71,32 +69,30 @@ private:
    std::unique_ptr<TMVA::Experimental::RTensor<float>> fSecondaryLeftoverBatch;
 
    std::vector<TMVA::Experimental::RTensor<float>> fBatchesVector;
+
 public:
    RBatchLoader(std::size_t batchSize, std::size_t numColumns, std::size_t numEntries, bool dropRemainder)
-    : fBatchSize(batchSize),
-      fNumColumns(numColumns),
-      fNumEntries(numEntries),
-      fDropRemainder(dropRemainder)
+      : fBatchSize(batchSize), fNumColumns(numColumns), fNumEntries(numEntries), fDropRemainder(dropRemainder)
    {
 
-     if (fBatchSize == 0) {
-       fBatchSize = fNumEntries;
-     }
-     
-     fLeftoverBatchSize = fNumEntries % fBatchSize;
-     fNumFullBatches = fNumEntries / fBatchSize;
+      if (fBatchSize == 0) {
+         fBatchSize = fNumEntries;
+      }
 
-     fNumLeftoverBatches = fLeftoverBatchSize == 0 ? 0 : 1;
+      fLeftoverBatchSize = fNumEntries % fBatchSize;
+      fNumFullBatches = fNumEntries / fBatchSize;
 
-     if (fDropRemainder) {
-       fNumBatches = fNumFullBatches;
-     }
-     
-     else {
-       fNumBatches = fNumFullBatches + fNumLeftoverBatches;
-     }
+      fNumLeftoverBatches = fLeftoverBatchSize == 0 ? 0 : 1;
 
-     fPrimaryLeftoverBatch =
+      if (fDropRemainder) {
+         fNumBatches = fNumFullBatches;
+      }
+
+      else {
+         fNumBatches = fNumFullBatches + fNumLeftoverBatches;
+      }
+
+      fPrimaryLeftoverBatch =
          std::make_unique<TMVA::Experimental::RTensor<float>>(std::vector<std::size_t>{0, fNumColumns});
       fSecondaryLeftoverBatch =
          std::make_unique<TMVA::Experimental::RTensor<float>>(std::vector<std::size_t>{0, fNumColumns});
@@ -185,16 +181,15 @@ public:
       std::size_t emptySlots = fBatchSize - PrimaryLeftoverSize;
 
       if (emptySlots >= LeftoverBatchSize) {
-         (*fPrimaryLeftoverBatch) =
-            (*fPrimaryLeftoverBatch).Resize({PrimaryLeftoverSize + LeftoverBatchSize, NumCols});
+         (*fPrimaryLeftoverBatch) = (*fPrimaryLeftoverBatch).Resize({PrimaryLeftoverSize + LeftoverBatchSize, NumCols});
          std::copy(LeftoverBatch.GetData(), LeftoverBatch.GetData() + (LeftoverBatchSize * NumCols),
                    fPrimaryLeftoverBatch->GetData() + (PrimaryLeftoverSize * NumCols));
 
          if (emptySlots == LeftoverBatchSize) {
             auto copy =
                std::make_unique<TMVA::Experimental::RTensor<float>>(std::vector<std::size_t>{fBatchSize, fNumColumns});
-            std::copy(fPrimaryLeftoverBatch->GetData(),
-                      fPrimaryLeftoverBatch->GetData() + (fBatchSize * fNumColumns), copy->GetData());
+            std::copy(fPrimaryLeftoverBatch->GetData(), fPrimaryLeftoverBatch->GetData() + (fBatchSize * fNumColumns),
+                      copy->GetData());
             batches.emplace_back(std::move(copy));
             *fPrimaryLeftoverBatch = *fSecondaryLeftoverBatch;
             fSecondaryLeftoverBatch =
@@ -206,15 +201,13 @@ public:
          (*fPrimaryLeftoverBatch) = (*fPrimaryLeftoverBatch).Resize({fBatchSize, NumCols});
          std::copy(LeftoverBatch.GetData(), LeftoverBatch.GetData() + (emptySlots * NumCols),
                    fPrimaryLeftoverBatch->GetData() + (PrimaryLeftoverSize * NumCols));
-         (*fSecondaryLeftoverBatch) =
-            (*fSecondaryLeftoverBatch).Resize({LeftoverBatchSize - emptySlots, NumCols});
+         (*fSecondaryLeftoverBatch) = (*fSecondaryLeftoverBatch).Resize({LeftoverBatchSize - emptySlots, NumCols});
          std::copy(LeftoverBatch.GetData() + (emptySlots * NumCols),
-                   LeftoverBatch.GetData() + (LeftoverBatchSize * NumCols),
-                   fSecondaryLeftoverBatch->GetData());
+                   LeftoverBatch.GetData() + (LeftoverBatchSize * NumCols), fSecondaryLeftoverBatch->GetData());
          auto copy =
             std::make_unique<TMVA::Experimental::RTensor<float>>(std::vector<std::size_t>{fBatchSize, fNumColumns});
-         std::copy(fPrimaryLeftoverBatch->GetData(),
-                   fPrimaryLeftoverBatch->GetData() + (fBatchSize * fNumColumns), copy->GetData());
+         std::copy(fPrimaryLeftoverBatch->GetData(), fPrimaryLeftoverBatch->GetData() + (fBatchSize * fNumColumns),
+                   copy->GetData());
          batches.emplace_back(std::move(copy));
          *fPrimaryLeftoverBatch = *fSecondaryLeftoverBatch;
          fSecondaryLeftoverBatch =
@@ -227,8 +220,7 @@ public:
             auto copy = std::make_unique<TMVA::Experimental::RTensor<float>>(
                std::vector<std::size_t>{fLeftoverBatchSize, fNumColumns});
             std::copy((*fPrimaryLeftoverBatch).GetData(),
-                      (*fPrimaryLeftoverBatch).GetData() + (fLeftoverBatchSize * fNumColumns),
-                      copy->GetData());
+                      (*fPrimaryLeftoverBatch).GetData() + (fLeftoverBatchSize * fNumColumns), copy->GetData());
             batches.emplace_back(std::move(copy));
          }
          fPrimaryLeftoverBatch =
@@ -239,33 +231,27 @@ public:
 
       // batches = batches;
       for (std::size_t i = 0; i < batches.size(); i++) {
-        if (Queue) {
-          fBatchQueue.push(std::move(batches[i]));          
-        }
-        else {
-          fBatchesVector.push_back(std::move(*batches[i]));
-        }
-
+         if (Queue) {
+            fBatchQueue.push(std::move(batches[i]));
+         } else {
+            fBatchesVector.push_back(std::move(*batches[i]));
+         }
       }
-      
    }
 
-  // void FillBatchesInQueue() {
-  //   for (std::size_t i = 0; i < batches.size(); i++) {
-  //     fBatchQueue.push(std::move(batches[i]));
-  //   }
-  // }
+   // void FillBatchesInQueue() {
+   //   for (std::size_t i = 0; i < batches.size(); i++) {
+   //     fBatchQueue.push(std::move(batches[i]));
+   //   }
+   // }
 
-  std::size_t GetNumBatchQueue() { return fBatchQueue.size(); }
-  std::size_t GetNumRemainderRows() { return fLeftoverBatchSize; }
-  std::size_t GetNumBatches() { return fNumBatches; }
-  std::size_t GetNumEntries() { return fNumEntries; }   
-  
-  std::vector<TMVA::Experimental::RTensor<float>> GetBatchesVector() {
-    return fBatchesVector;
-  }  
-  // std::vector<std::unique_ptr<TMVA::Experimental::RTensor<float>>> GetBatchesVector() {return batches; }
-  
+   std::size_t GetNumBatchQueue() { return fBatchQueue.size(); }
+   std::size_t GetNumRemainderRows() { return fLeftoverBatchSize; }
+   std::size_t GetNumBatches() { return fNumBatches; }
+   std::size_t GetNumEntries() { return fNumEntries; }
+
+   std::vector<TMVA::Experimental::RTensor<float>> GetBatchesVector() { return fBatchesVector; }
+   // std::vector<std::unique_ptr<TMVA::Experimental::RTensor<float>>> GetBatchesVector() {return batches; }
 };
 
 } // namespace TMVA::Experimental::Internal

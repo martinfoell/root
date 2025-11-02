@@ -181,7 +181,7 @@ struct RChunkConstructor {
    }
 
    //////////////////////////////////////////////////////////////////////////
-   /// \brief Creates chunks from the dataset consisting of blocks with the begin and end entry. 
+   /// \brief Creates chunks from the dataset consisting of blocks with the begin and end entry.
    void CreateChunksIntervals()
    {
 
@@ -220,7 +220,7 @@ struct RChunkConstructor {
    }
 
    //////////////////////////////////////////////////////////////////////////
-   /// \brief Fills a vector with the size of every chunk from the dataset 
+   /// \brief Fills a vector with the size of every chunk from the dataset
    void SizeOfChunks()
    {
 
