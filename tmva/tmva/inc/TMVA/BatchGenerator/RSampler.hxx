@@ -26,7 +26,7 @@ namespace TMVA::Experimental::Internal {
 /**
 \class ROOT::TMVA::Experimental::Internal::RSampler
 \ingroup tmva
-\brief Implementation of different sampling strategies.
+\brief Implementation of under- and oversampling strategies.
 */
 
 class RSampler {
