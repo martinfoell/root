@@ -368,6 +368,9 @@ public:
             }
          }
 
+         // reset dataframe
+         ROOT::Internal::RDF::ChangeBeginAndEndEntries(f_rdf, (*fEntries)[0], (*fEntries)[fNumEntries]);
+         
          // shuffle the data in the chunk tensor
          fTensorOperators->ShuffleTensor(TrainChunkTensor, Tensor);
       }
@@ -417,14 +420,12 @@ public:
             }
          }
 
+         // reset dataframe
+         ROOT::Internal::RDF::ChangeBeginAndEndEntries(f_rdf, (*fEntries)[0], (*fEntries)[fNumEntries]);
+         
          // shuffle the data in the chunk tensor
          fTensorOperators->ShuffleTensor(ValidationChunkTensor, Tensor);         
       }
-   }
-
-   void ResetDataframe()
-   {
-      ROOT::Internal::RDF::ChangeBeginAndEndEntries(f_rdf, 0, fNumEntries);
    }
 
    std::vector<std::size_t> GetTrainingChunkSizes() { return fTraining->ChunksSizes; }
