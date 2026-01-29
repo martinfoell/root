@@ -37,7 +37,7 @@ public:
    
    }
 
-  void ShuffleTensor(RFlat2DMatrix &ShuffledTensor, RFlat2DMatrix &Tensor ) {
+  void ShuffleTensor(RFlat2DMatrix &ShuffledTensor, RFlat2DMatrix &Tensor) {
     std::random_device rd;
     std::mt19937 g;
 
@@ -51,20 +51,23 @@ public:
     std::size_t cols = Tensor.GetCols();
     ShuffledTensor.Resize(rows, cols);
     
-    // make an identity permutation map
-    std::vector<Long_t> indices(rows);
-    std::iota(indices.begin(), indices.end(), 0);    
+    if (fShuffle) {    
+       // make an identity permutation map
+       std::vector<Long_t> indices(rows);
+       std::iota(indices.begin(), indices.end(), 0);    
 
-    // shuffle the identity permutation to create a new permutation
-    if (fShuffle) {
-      std::shuffle(indices.begin(), indices.end(), g);
+       // shuffle the identity permutation to create a new permutation
+       std::shuffle(indices.begin(), indices.end(), g);
+       
+       // shuffle data in the tensor with the permutation map defined above
+       for (std::size_t i = 0; i < rows; i++) {
+          std::copy(Tensor.GetData() + indices[i] * cols,
+                    Tensor.GetData() + (indices[i] + 1) * cols,
+                    ShuffledTensor.GetData() + i * cols);
+       }
     }
-
-    // shuffle data in the tensor with the permutation map defined above
-    for (std::size_t i = 0; i < rows; i++) {
-      std::copy(Tensor.GetData() + indices[i] * cols,
-                Tensor.GetData() + (indices[i] + 1) * cols,
-                ShuffledTensor.GetData() + i * cols);
+    else {
+       ShuffledTensor = Tensor;
     }
   }
 
@@ -88,7 +91,7 @@ public:
                 SlicedTensor.GetData());
    }
   
-   void ConcatinateTensors(RFlat2DMatrix &ConcatTensor, std::vector<RFlat2DMatrix> &Tensors)
+   void ConcatinateTensors(RFlat2DMatrix &ConcatTensor, const std::vector<RFlat2DMatrix> &Tensors)
    {
       std::size_t cols = Tensors[0].GetCols();
       std::size_t rows = 0;
