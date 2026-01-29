@@ -113,6 +113,9 @@ private:
 
    std::vector<RFlat2DMatrix> fTrainingDatasets;
    std::vector<RFlat2DMatrix> fValidationDatasets;
+
+   RFlat2DMatrix fTrainingDataset;
+   RFlat2DMatrix fValidationDataset;
    
    std::size_t fNumTrainingEntries;
    std::size_t fNumValidationEntries;
@@ -181,6 +184,10 @@ public:
             datasetEntry++;
          }
       }
+
+      // reset dataframe
+      ROOT::Internal::RDF::ChangeBeginAndEndEntries(rdf, (*Entries)[0], (*Entries)[NumEntries]);
+      
       RFlat2DMatrix ShuffledDataset({NumEntries, fNumDatasetCols});
       fTensorOperators->ShuffleTensor(ShuffledDataset, Dataset);
       fTensorOperators->SliceTensor(TrainingDataset, ShuffledDataset, {{0, NumTrainingEntries}, {0, fNumDatasetCols}});
@@ -209,9 +216,22 @@ public:
      }
    }
 
+   //////////////////////////////////////////////////////////////////////////
+   /// \brief Concatenate the datasets to a dataset
+   void ConcatenateDatasets()
+   {
+      fTensorOperators->ConcatinateTensors(fTrainingDataset, fTrainingDatasets);
+      fTensorOperators->ConcatinateTensors(fValidationDataset, fValidationDatasets);      
+   }
+
    std::vector<RFlat2DMatrix> GetTrainingDatasets() {return fTrainingDatasets;}
    std::vector<RFlat2DMatrix> GetValidationDatasets() {return fValidationDatasets;}
 
+   RFlat2DMatrix GetTrainingDataset() {return fTrainingDataset;}
+   RFlat2DMatrix GetValidationDataset() {return fValidationDataset;}
+   
+   std::size_t GetNumTrainingEntries() {return fTrainingDataset.GetRows();}
+   std::size_t GetNumValidationEntries() {return fValidationDataset.GetRows();}   
 };
 
 } // namespace Internal
